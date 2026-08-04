@@ -1,0 +1,220 @@
+.pcr-container {
+  width: 100%;
+}
+
+.pcr-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 25px;
+}
+
+.pcr-header h2 {
+  margin-bottom: 0;
+  color: #333;
+  font-size: 1.5rem;
+}
+
+.refresh-btn {
+  padding: 8px 16px;
+  background-color: #667eea;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background-color 0.3s ease;
+}
+
+.refresh-btn:hover {
+  background-color: #764ba2;
+}
+
+.nifty-info {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 25px;
+  border-radius: 10px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  margin-bottom: 25px;
+}
+
+.nifty-price,
+.nifty-change {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nifty-info .label {
+  font-size: 0.9rem;
+  opacity: 0.9;
+  font-weight: 600;
+}
+
+.nifty-price .price {
+  font-size: 2rem;
+  font-weight: 700;
+}
+
+.nifty-change .value {
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+
+.nifty-change.positive .value {
+  color: #84fab0;
+}
+
+.nifty-change.negative .value {
+  color: #ffd700;
+}
+
+.pcr-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  margin-bottom: 30px;
+}
+
+.metric {
+  background: #f8f9fa;
+  padding: 20px;
+  border-radius: 8px;
+  border-left: 4px solid #667eea;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+}
+
+.metric-label {
+  font-size: 0.9rem;
+  color: #666;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.metric-value {
+  font-size: 2.5rem;
+  font-weight: 700;
+  font-family: 'Courier New', monospace;
+}
+
+.metric-sentiment {
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 20px;
+  background-color: white;
+  color: #667eea;
+}
+
+.pcr-details {
+  background-color: #f8f9fa;
+  padding: 20px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.pcr-details h3 {
+  margin-top: 0;
+  color: #333;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 15px;
+}
+
+.stat-item {
+  background: white;
+  padding: 15px;
+  border-radius: 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-left: 3px solid #667eea;
+}
+
+.stat-name {
+  font-size: 0.9rem;
+  color: #666;
+  font-weight: 600;
+}
+
+.stat-value {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #333;
+  font-family: 'Courier New', monospace;
+}
+
+.pcr-interpretation {
+  background-color: #f0f4ff;
+  padding: 20px;
+  border-radius: 8px;
+  border-left: 4px solid #667eea;
+  margin-bottom: 20px;
+}
+
+.pcr-interpretation h3 {
+  margin-top: 0;
+  color: #667eea;
+}
+
+.pcr-interpretation p {
+  color: #333;
+  margin-bottom: 15px;
+  line-height: 1.6;
+}
+
+.pcr-interpretation ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.pcr-interpretation li {
+  color: #333;
+  margin-bottom: 8px;
+  line-height: 1.6;
+}
+
+.pcr-interpretation strong {
+  color: #667eea;
+}
+
+.pcr-footer {
+  text-align: center;
+  color: #999;
+  padding-top: 15px;
+  border-top: 1px solid #e9ecef;
+}
+
+.error-message {
+  background-color: #fee;
+  border-left: 4px solid #c33;
+  color: #c33;
+  padding: 12px;
+  border-radius: 4px;
+  margin-bottom: 20px;
+  font-size: 0.95rem;
+}
+
+@media (max-width: 768px) {
+  .nifty-info {
+    grid-template-columns: 1fr;
+  }
+
+  .pcr-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+}

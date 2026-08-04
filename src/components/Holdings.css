@@ -1,0 +1,153 @@
+.holdings-container {
+  width: 100%;
+}
+
+.holdings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 25px;
+}
+
+.holdings-header h2 {
+  margin-bottom: 0;
+  color: #333;
+  font-size: 1.5rem;
+}
+
+.refresh-btn {
+  padding: 8px 16px;
+  background-color: #667eea;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background-color 0.3s ease;
+}
+
+.refresh-btn:hover {
+  background-color: #764ba2;
+}
+
+.portfolio-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 15px;
+  margin-bottom: 30px;
+}
+
+.stat-box {
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  padding: 20px;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stat-box.positive {
+  background: linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%);
+}
+
+.stat-box.negative {
+  background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+}
+
+.stat-label {
+  font-size: 0.85rem;
+  color: #666;
+  font-weight: 500;
+}
+
+.stat-box.positive .stat-label,
+.stat-box.negative .stat-label {
+  color: #333;
+}
+
+.stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #333;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: #999;
+  font-size: 1.1rem;
+}
+
+.holdings-table-wrapper {
+  overflow-x: auto;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.holdings-table {
+  width: 100%;
+  border-collapse: collapse;
+  background-color: white;
+}
+
+.holdings-table thead {
+  background-color: #f8f9fa;
+  border-bottom: 2px solid #e9ecef;
+}
+
+.holdings-table th {
+  padding: 15px;
+  text-align: left;
+  font-weight: 600;
+  color: #495057;
+  font-size: 0.9rem;
+}
+
+.holdings-table td {
+  padding: 15px;
+  border-bottom: 1px solid #e9ecef;
+  color: #333;
+  font-size: 0.95rem;
+}
+
+.holdings-table tbody tr {
+  transition: background-color 0.2s ease;
+}
+
+.holdings-table tbody tr:hover {
+  background-color: #f8f9fa;
+}
+
+.holdings-table tbody tr.positive {
+  border-left: 4px solid #84fab0;
+}
+
+.holdings-table tbody tr.negative {
+  border-left: 4px solid #fa709a;
+}
+
+.holdings-table .symbol {
+  font-weight: 600;
+  color: #667eea;
+}
+
+.holdings-table .gain {
+  color: #28a745;
+  font-weight: 600;
+}
+
+.holdings-table .loss {
+  color: #dc3545;
+  font-weight: 600;
+}
+
+@media (max-width: 768px) {
+  .holdings-table {
+    font-size: 0.85rem;
+  }
+
+  .holdings-table th,
+  .holdings-table td {
+    padding: 10px;
+  }
+}
