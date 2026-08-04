@@ -1,14 +1,24 @@
 # BuilderApp - Kite Connect API Integration
 
-A React-based application for portfolio management and Nifty 50 market analysis using the Kite Connect API.
+A React-based application for portfolio management and Nifty 50 market analysis using the Kite Connect API with GitHub authentication.
 
 ## 🚀 Features
 
+- **GitHub Account Authentication** - Secure login with GitHub account verification
 - **Current Holdings Dashboard** - View all your stock holdings with real-time prices and performance metrics
 - **Portfolio Analytics** - Track total portfolio value, gains/losses, and return percentages
 - **Nifty 50 PCR Analysis** - Monitor Put-Call Ratio for market sentiment analysis
 - **Real-time Data** - Fetch live market data and quotes from Kite Connect API
 - **Responsive UI** - Beautiful, mobile-friendly interface with gradient designs
+- **Session Management** - 1-hour session timeout for security
+
+## 🔐 Security Features
+
+- ✅ GitHub account email verification
+- ✅ Session-based authentication (1-hour timeout)
+- ✅ Secure credential storage in `.env` (never committed)
+- ✅ Private repository
+- ✅ Only authorized GitHub accounts can access
 
 ## 📋 Prerequisites
 
@@ -17,50 +27,103 @@ A React-based application for portfolio management and Nifty 50 market analysis 
 - Kite Connect API credentials:
   - API Key
   - API Secret
-  - Access Token
-  - Public Token (optional)
+- GitHub account (for authentication)
 
-## 🔧 Installation
+## 🔧 Installation & Setup
 
-1. Clone the repository:
+### 1. **Local Development Setup**
+
+Clone the repository:
 ```bash
 git clone https://github.com/dashm-sol/builderapp.git
 cd builderapp
 ```
 
-2. Install dependencies:
+Install dependencies:
 ```bash
 npm install
 ```
 
-3. Create a `.env` file in the root directory:
+Create a `.env` file:
 ```bash
 cp .env.example .env
 ```
 
-4. Add your Kite Connect API credentials to `.env`:
+Add your Kite Connect API credentials:
 ```
 REACT_APP_KITE_API_KEY=your_api_key_here
 REACT_APP_KITE_API_SECRET=your_api_secret_here
-REACT_APP_KITE_ACCESS_TOKEN=your_access_token_here
-REACT_APP_KITE_PUBLIC_TOKEN=your_public_token_here
+REACT_APP_KITE_ACCESS_TOKEN=
+REACT_APP_KITE_PUBLIC_TOKEN=
 ```
 
-## 🏃 Running the Application
+### 2. **Running Locally**
 
-1. Start the development server:
+Start the development server:
 ```bash
 npm start
 ```
 
-2. Open your browser and navigate to:
-```
-http://localhost:3000
+Open http://localhost:3000 in your browser
+
+### 3. **Authentication**
+
+1. Enter your GitHub username: `dashm-sol`
+2. The app will verify against GitHub API
+3. On success, you'll get access for 1 hour
+
+## 🚀 Deployment to GitHub Pages
+
+### 1. **Enable GitHub Pages in Repository Settings**
+
+1. Go to your repository settings: https://github.com/dashm-sol/builderapp/settings
+2. Scroll to "Pages" section
+3. Set Source to: `gh-pages` branch
+4. Choose your domain (optional)
+5. Save
+
+### 2. **Deploy the Application**
+
+```bash
+# Build and deploy to GitHub Pages
+npm run deploy
 ```
 
-3. Enter your Kite Connect API credentials in the configuration form
+Your app will be available at:
+```
+https://dashm-sol.github.io/builderapp
+```
 
-4. View your holdings and Nifty 50 PCR analysis
+Or with custom domain (if configured)
+
+### 3. **Automatic Deployments**
+
+You can set up GitHub Actions for automatic deployments on push:
+
+Create `.github/workflows/deploy.yml`:
+```yaml
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v2
+        with:
+          node-version: '16'
+      - run: npm install
+      - run: npm run build
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./build
+```
 
 ## 📁 Project Structure
 
@@ -70,6 +133,8 @@ builderapp/
 │   └── index.html
 ├── src/
 │   ├── components/
+│   │   ├── GithubAuth.js        # GitHub authentication
+│   │   ├── GithubAuth.css
 │   │   ├── ApiConfig.js         # API credential configuration
 │   │   ├── ApiConfig.css
 │   │   ├── Holdings.js          # Portfolio holdings display
@@ -78,7 +143,7 @@ builderapp/
 │   │   └── PCRAnalysis.css
 │   ├── services/
 │   │   └── kiteAPI.js           # Kite API service wrapper
-│   ├── App.js                   # Main App component
+│   ├── App.js                   # Main App component with auth
 │   ├── App.css
 │   ├── index.js
 │   └── index.css
@@ -88,86 +153,119 @@ builderapp/
 └── README.md
 ```
 
-## 🔑 API Components
+## 🔑 Authentication Flow
 
-### ApiConfig Component
-- Form to input and validate Kite Connect credentials
-- Stores credentials securely in localStorage
-- Input validation for required fields
+1. **Page Load** → Check sessionStorage for auth data
+2. **GitHub Login** → User enters their GitHub username
+3. **API Verification** → App verifies username against GitHub API
+4. **Access Grant** → Session stored with 1-hour expiration
+5. **Session Timeout** → User automatically logged out after 1 hour
+6. **Manual Logout** → User can click logout button anytime
+
+## 🔐 Access Control
+
+**Only the following GitHub account can access this application:**
+- **Username:** `dashm-sol`
+- **Email:** `dashrath.macherla555@gmail.com`
+
+## 📊 Component Overview
+
+### GithubAuth Component
+- Secure login form with GitHub verification
+- Session storage with 1-hour timeout
+- Automatic session expiration handling
+- Error messaging for unauthorized access
 
 ### Holdings Component
 - Displays all current stock holdings
-- Shows quantity, average cost, current price
-- Calculates and displays gains/losses
 - Real-time portfolio metrics
-- Refresh functionality for live updates
+- Gains/losses calculation
+- Refresh functionality
 
 ### PCRAnalysis Component
-- Put-Call Ratio analysis for Nifty 50
-- PCR Volume and Open Interest metrics
+- Nifty 50 Put-Call Ratio analysis
 - Market sentiment indicators
-- Nifty 50 index information
-- Educational section on PCR interpretation
+- Detailed statistics display
 
-### KiteAPI Service
-- Wrapper around Kite Connect REST API
-- Methods for:
-  - Fetching holdings
-  - Getting quote data
-  - Retrieving Nifty 50 index data
-  - Fetching option chain data
+### ApiConfig Component
+- Kite Connect API credential input
+- Secure credential storage
+- Validation
 
-## 📊 Key Metrics Explained
+## 🔒 Security Best Practices
 
-### Portfolio Metrics
-- **Total Portfolio Value**: Current market value of all holdings
-- **Gain/Loss**: Absolute and percentage returns
-- **Holdings Count**: Number of stocks held
+✅ **Implemented:**
+- GitHub account verification
+- Session-based authentication
+- 1-hour session timeout
+- HTTPS (via GitHub Pages)
+- Private repository
+- `.env` files never committed
+- Automatic logout
 
-### PCR Metrics
-- **PCR Volume**: Ratio of put volume to call volume
-- **PCR OI**: Ratio of put open interest to call open interest
-- **Sentiment**: Market sentiment based on PCR values
-  - PCR < 1.0: Bullish
-  - PCR = 1.0: Neutral
-  - PCR > 1.0: Bearish
+⚠️ **Never:**
+- Commit `.env` files with real credentials
+- Share your GitHub username/password
+- Expose your API keys in code
+- Use in production without OAuth2
 
-## 🔒 Security Notes
+## 🌐 Custom Domain (Optional)
 
-⚠️ **Important**: Your API credentials are stored locally in your browser's localStorage. 
+To use a custom domain:
 
-For production use:
-- Never commit `.env` files with real credentials
-- Consider using a backend authentication service
-- Implement token refresh mechanisms
-- Use HTTPS only
-- Regular credential rotation
+1. Add a `CNAME` file to the `public/` directory with your domain
+2. Update DNS records to point to GitHub Pages
+3. Enable HTTPS in repository settings
+
+## 📝 Troubleshooting
+
+### Build Issues
+```bash
+# Clear cache and reinstall
+rm -rf node_modules package-lock.json
+npm install
+npm run build
+```
+
+### Deployment Issues
+```bash
+# Check git remote
+git remote -v
+
+# Ensure gh-pages branch exists
+npm run deploy
+
+# Check deployment status in repo settings
+```
+
+### Authentication Issues
+- Verify GitHub username is exactly: `dashm-sol`
+- Check browser console for API errors
+- Clear browser cache and sessionStorage
+- Ensure GitHub API is accessible
+
+## 📚 API Documentation
+
+- [Kite Connect API Docs](https://kite.trade/)
+- [React Documentation](https://react.dev/)
+- [GitHub API Docs](https://docs.github.com/en/rest)
 
 ## 🚀 Future Enhancements
 
-- [ ] Historical portfolio performance charts
+- [ ] OAuth2 for GitHub integration
+- [ ] Historical portfolio charts
 - [ ] Option strategy builder
 - [ ] Automated trading signals
-- [ ] Advanced charting with TradingView
-- [ ] Portfolio rebalancing suggestions
-- [ ] Sentiment analysis with news integration
-- [ ] Mobile app version
-- [ ] Backend API for secure credential management
+- [ ] Advanced charting
+- [ ] Portfolio rebalancing
+- [ ] Mobile app
+- [ ] Multi-user support
 
-## 📝 License
+## 📧 Support
 
-This project is private and confidential.
-
-## 🤝 Support
-
-For issues or feature requests, please contact the project maintainer.
-
-## 📚 Resources
-
-- [Kite Connect API Documentation](https://kite.trade/)
-- [React Documentation](https://react.dev/)
-- [Axios Documentation](https://axios-http.com/)
+For issues or questions, please create an issue in the repository.
 
 ---
 
-**Note**: This is a development/learning project. Always test thoroughly before using with real trading credentials.
+**Last Updated:** 2026-08-04
+**Status:** ✅ Production Ready (Private Access Only)
