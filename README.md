@@ -49,13 +49,17 @@ Create a `.env` file:
 cp .env.example .env
 ```
 
-Add your Kite Connect API credentials:
+Add your Kite Connect API credentials to the backend `.env` file. Do not use `REACT_APP_` variables for these values:
 ```
-REACT_APP_KITE_API_KEY=your_api_key_here
-REACT_APP_KITE_API_SECRET=your_api_secret_here
-REACT_APP_KITE_ACCESS_TOKEN=
-REACT_APP_KITE_PUBLIC_TOKEN=
+KITE_API_KEY=your_api_key_here
+KITE_API_SECRET=your_api_secret_here
+SESSION_SECRET=replace_with_a_long_random_value
+BACKEND_PORT=4000
+FRONTEND_URL=http://localhost:3000
 ```
+
+In the Kite developer console, set the redirect URL to:
+`http://localhost:4000/api/kite/callback`
 
 ### 2. **Running Locally**
 
@@ -64,13 +68,21 @@ Start the development server:
 npm start
 ```
 
+In a second terminal, start the backend:
+```bash
+npm run server
+```
+
 Open http://localhost:3000 in your browser
 
 ### 3. **Authentication**
 
-1. Enter your GitHub username: `dashm-sol`
-2. The app will verify against GitHub API
-3. On success, you'll get access for 1 hour
+1. Complete the app's access check.
+2. Click **Connect with Kite**.
+3. Sign in at Kite.
+4. Kite redirects to the backend callback with a one-time request token.
+5. The backend exchanges it for an access token using `KITE_API_SECRET` and stores it in the server session.
+6. Browser API calls use the HTTP-only session cookie; the access token is never sent to React or stored in browser storage.
 
 ## 🚀 Deployment to GitHub Pages
 

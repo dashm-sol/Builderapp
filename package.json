@@ -4,22 +4,29 @@
   "description": "Kite Connect API integration for portfolio management and Nifty 50 analysis",
   "private": true,
   "homepage": "https://dashm-sol.github.io/builderapp",
+  "proxy": "http://localhost:4000",
   "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-scripts": "5.0.1",
     "axios": "^1.6.0",
     "chart.js": "^4.4.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "express-session": "^1.18.1",
+    "react": "^18.2.0",
     "react-chartjs-2": "^5.2.0",
-    "react-table": "^8.10.0"
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1",
+    "react-table": "^7.8.0",
+    "session-file-store": "^1.5.0"
   },
   "devDependencies": {
-    "@testing-library/react": "^13.4.0",
     "@testing-library/jest-dom": "^5.16.5",
+    "@testing-library/react": "^13.4.0",
     "gh-pages": "^5.0.0"
   },
   "scripts": {
     "start": "react-scripts start",
+    "server": "node server/index.js",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",

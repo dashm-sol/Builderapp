@@ -1,44 +1,50 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import './ApiConfig.css';
 
 function ApiConfig({ onConfigured }) {
   const [formData, setFormData] = useState({
     apiKey: '',
     apiSecret: '',
-    accessToken: '',
-    publicToken: '',
+    requestToken: '',
   });
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value,
-    }));
+  useEffect(() => {
+    fetch('/api/kite/session', { credentials: 'include' })
+      .then(response => response.json())
+      .then(data => {
+        if (data.authenticated) onConfigured();
+      })
+      .catch(() => setError('Unable to contact the Kite server.'));
+  }, [onConfigured]);
+
+  const handleChange = (event) => {
+    const { name, value } = event.target;
+    setFormData(previous => ({ ...previous, [name]: value }));
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async (event) => {
+    event.preventDefault();
     setError(null);
     setLoading(true);
 
     try {
-      // Validate all fields are filled
-      if (!formData.apiKey || !formData.accessToken) {
-        throw new Error('API Key and Access Token are required');
-      }
-
-      // Store in localStorage (in production, use secure methods)
-      localStorage.setItem('kiteConfig', JSON.stringify({
-        apiKey: formData.apiKey,
-        accessToken: formData.accessToken,
-      }));
-
-      onConfigured(formData.apiKey);
-    } catch (err) {
-      setError(err.message);
+      const response = await fetch('/api/kite/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          apiKey: formData.apiKey.trim(),
+          apiSecret: formData.apiSecret.trim(),
+          requestToken: formData.requestToken.trim(),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Kite connection failed');
+      onConfigured(formData.apiKey.trim());
+    } catch (connectError) {
+      setError(connectError.message);
     } finally {
       setLoading(false);
     }
@@ -47,75 +53,33 @@ function ApiConfig({ onConfigured }) {
   return (
     <div className="config-container">
       <div className="config-card">
-        <h2>🔑 Configure Kite Connect API</h2>
+        <h2>🔑 Connect Kite Connect</h2>
         <p className="config-description">
-          Enter your Kite Connect API credentials to get started
+          Enter the credentials and the one-time request token from Kite. The request token is valid only for about 30 seconds to 2 minutes, so exchange it immediately.
         </p>
 
         {error && <div className="error-message">{error}</div>}
 
         <form onSubmit={handleSubmit} className="config-form">
           <div className="form-group">
-            <label htmlFor="apiKey">API Key *</label>
-            <input
-              type="text"
-              id="apiKey"
-              name="apiKey"
-              value={formData.apiKey}
-              onChange={handleChange}
-              placeholder="Enter your API Key"
-              required
-            />
+            <label htmlFor="apiKey">API Key</label>
+            <input id="apiKey" name="apiKey" value={formData.apiKey} onChange={handleChange} required />
           </div>
-
           <div className="form-group">
             <label htmlFor="apiSecret">API Secret</label>
-            <input
-              type="password"
-              id="apiSecret"
-              name="apiSecret"
-              value={formData.apiSecret}
-              onChange={handleChange}
-              placeholder="Enter your API Secret"
-            />
+            <input id="apiSecret" name="apiSecret" type="password" value={formData.apiSecret} onChange={handleChange} required />
           </div>
-
           <div className="form-group">
-            <label htmlFor="accessToken">Access Token *</label>
-            <input
-              type="password"
-              id="accessToken"
-              name="accessToken"
-              value={formData.accessToken}
-              onChange={handleChange}
-              placeholder="Enter your Access Token"
-              required
-            />
+            <label htmlFor="requestToken">Request Token</label>
+            <input id="requestToken" name="requestToken" value={formData.requestToken} onChange={handleChange} required />
           </div>
-
-          <div className="form-group">
-            <label htmlFor="publicToken">Public Token</label>
-            <input
-              type="text"
-              id="publicToken"
-              name="publicToken"
-              value={formData.publicToken}
-              onChange={handleChange}
-              placeholder="Enter your Public Token"
-            />
-          </div>
-
-          <button 
-            type="submit" 
-            className="submit-button"
-            disabled={loading}
-          >
-            {loading ? 'Configuring...' : '✓ Configure & Continue'}
+          <button type="submit" className="submit-button" disabled={loading}>
+            {loading ? 'Connecting...' : 'Connect Kite'}
           </button>
         </form>
 
         <div className="security-note">
-          <p>🔒 <strong>Security Note:</strong> Your credentials are stored locally in your browser. Never share your API Secret or Access Token.</p>
+          <p>🔒 Request token: short-lived handshake token (~30 sec to 2 min). Access token: longer-lived (~24 hours, refreshed daily) and kept server-side in the session, never exposed to the browser.</p>
         </div>
       </div>
     </div>

@@ -16,15 +16,14 @@ function Holdings({ apiKey }) {
     setLoading(true);
     setError(null);
     try {
-      const config = JSON.parse(localStorage.getItem('kiteConfig'));
-      const kiteAPI = new KiteAPI(config.accessToken);
+      const kiteAPI = new KiteAPI();
       const holdingsData = await kiteAPI.getHoldings();
       
       setHoldings(holdingsData);
 
       // Fetch quotes for all holdings
       if (holdingsData.length > 0) {
-        const instruments = holdingsData.map(h => h.tradingsymbol);
+        const instruments = holdingsData.map(h => `${h.exchange}:${h.tradingsymbol}`);
         const quotesData = await kiteAPI.getQuote(instruments);
         setQuotes(quotesData);
       }
@@ -38,15 +37,16 @@ function Holdings({ apiKey }) {
 
   const calculateTotalValue = () => {
     return holdings.reduce((sum, holding) => {
-      const currentPrice = quotes[holding.tradingsymbol]?.last_price || holding.avg_cost;
+      const currentPrice = holding.last_price ?? holding.average_price ?? 0;
       return sum + (holding.quantity * currentPrice);
     }, 0);
   };
 
   const calculateGainLoss = () => {
     return holdings.reduce((sum, holding) => {
-      const currentPrice = quotes[holding.tradingsymbol]?.last_price || holding.avg_cost;
-      return sum + (holding.quantity * (currentPrice - holding.avg_cost));
+      const currentPrice = holding.last_price ?? holding.average_price ?? 0;
+      const averagePrice = holding.average_price ?? 0;
+      return sum + (holding.quantity * (currentPrice - averagePrice));
     }, 0);
   };
 
@@ -56,7 +56,8 @@ function Holdings({ apiKey }) {
 
   const totalValue = calculateTotalValue();
   const gainLoss = calculateGainLoss();
-  const gainLossPercent = (gainLoss / (totalValue - gainLoss)) * 100;
+  const costBasis = totalValue - gainLoss;
+  const gainLossPercent = costBasis ? (gainLoss / costBasis) * 100 : 0;
 
   return (
     <div className="holdings-container">
@@ -105,18 +106,18 @@ function Holdings({ apiKey }) {
               </thead>
               <tbody>
                 {holdings.map((holding, idx) => {
-                  const quote = quotes[holding.tradingsymbol] || {};
-                  const currentPrice = quote.last_price || holding.avg_cost;
+                  const currentPrice = holding.last_price ?? holding.average_price ?? 0;
+                  const averagePrice = holding.average_price ?? 0;
                   const holdingValue = holding.quantity * currentPrice;
-                  const costValue = holding.quantity * holding.avg_cost;
+                  const costValue = holding.quantity * averagePrice;
                   const gain = holdingValue - costValue;
-                  const returnPercent = (gain / costValue) * 100;
+                  const returnPercent = costValue ? (gain / costValue) * 100 : 0;
 
                   return (
                     <tr key={idx} className={gain >= 0 ? 'positive' : 'negative'}>
                       <td className="symbol">{holding.tradingsymbol}</td>
                       <td>{holding.quantity}</td>
-                      <td>₹{holding.avg_cost.toFixed(2)}</td>
+                      <td>₹{averagePrice.toFixed(2)}</td>
                       <td>₹{currentPrice.toFixed(2)}</td>
                       <td>₹{holdingValue.toFixed(2)}</td>
                       <td className={gain >= 0 ? 'gain' : 'loss'}>

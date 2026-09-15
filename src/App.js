@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import './App.css';
 import Holdings from './components/Holdings';
 import PCRAnalysis from './components/PCRAnalysis';
@@ -42,12 +42,15 @@ function App() {
     startSessionTimer(60 * 60 * 1000); // 1 hour
   };
 
-  const handleConfigured = (key) => {
-    setApiKey(key);
+  const handleConfigured = useCallback((configuredApiKey) => {
+    if (configuredApiKey) {
+      setApiKey(configuredApiKey);
+    }
     setIsConfigured(true);
-  };
+  }, []);
 
   const handleLogout = () => {
+    fetch('/api/kite/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
     sessionStorage.removeItem('githubAuth');
     if (sessionTimer) clearTimeout(sessionTimer);
     setIsAuthenticated(false);
