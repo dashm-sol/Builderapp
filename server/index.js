@@ -18,11 +18,55 @@ const kiteApiSecret = process.env.KITE_API_SECRET;
 const sessionSecret = process.env.SESSION_SECRET;
 const kiteBaseUrl = 'https://api.kite.trade';
 const sessionStorePath = path.resolve(__dirname, '.sessions');
+const sessionDebugLogPath = path.resolve(__dirname, 'session-debug.log');
+const sessionDebugCountPath = path.resolve(__dirname, '.session-debug-count');
+const maxDebugLogRecords = 100;
 
 fs.mkdirSync(sessionStorePath, { recursive: true });
 
 if (!sessionSecret) {
   throw new Error('SESSION_SECRET is required');
+}
+
+function getDebugLogRecordCount() {
+  try {
+    const count = fs.readFileSync(sessionDebugCountPath, 'utf8').trim();
+    return Number.isFinite(Number(count)) ? Number(count) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function setDebugLogRecordCount(count) {
+  try {
+    fs.writeFileSync(sessionDebugCountPath, String(count), 'utf8');
+  } catch (error) {
+    console.error('Failed to update debug log count:', error.message);
+  }
+}
+
+function writeSessionDebugLog(event, details = {}) {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    event,
+    ...details,
+  };
+  try {
+    fs.appendFileSync(sessionDebugLogPath, `${JSON.stringify(entry)}\n`, 'utf8');
+    const currentCount = getDebugLogRecordCount();
+    const newCount = currentCount + 1;
+    
+    if (newCount >= maxDebugLogRecords) {
+      // Clear log after reaching 100 records
+      fs.writeFileSync(sessionDebugLogPath, '', 'utf8');
+      setDebugLogRecordCount(0);
+      console.log(`Session debug log cleared after ${maxDebugLogRecords} records`);
+    } else {
+      setDebugLogRecordCount(newCount);
+    }
+  } catch (error) {
+    console.error('Failed to write session debug log:', error.message);
+  }
 }
 
 app.set('trust proxy', 1);
@@ -49,28 +93,91 @@ app.use(session({
 }));
 
 function requireKiteSession(req, res, next) {
+  const sessionState = {
+    hasAccessToken: Boolean(req.session.kiteAccessToken),
+    kiteApiKey: req.session.kiteApiKey || null,
+    kiteLoginAt: req.session.kiteLoginAt || null,
+  };
+  console.log('Checking Kite session for protected route:', sessionState);
+  writeSessionDebugLog('protected-session-check', sessionState);
   if (!req.session.kiteAccessToken) {
     return res.status(401).json({ error: 'Kite login required' });
   }
   next();
 }
 
-async function proxyKiteRequest(req, res, pathName, params) {
+function parseCsvLine(line) {
+  const cells = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === ',' && !inQuotes) {
+      cells.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  cells.push(current);
+  return cells.map(value => value.trim());
+}
+
+async function proxyKiteRequest(req, res, pathName, params = {}, options = {}) {
   const apiKey = req.session.kiteApiKey || kiteApiKey;
   try {
     const response = await axios.get(`${kiteBaseUrl}${pathName}`, {
       params,
+      responseType: options.responseType || 'json',
       headers: {
         'X-Kite-Version': '3',
         Authorization: `token ${apiKey}:${req.session.kiteAccessToken}`,
       },
     });
+
+    if (options.parseCsv) {
+      const csvText = String(response.data || '');
+      const lines = csvText.split(/\r?\n/).filter(line => line.trim().length > 0);
+      if (lines.length === 0) {
+        return res.json([]);
+      }
+      const headers = parseCsvLine(lines[0]);
+      const rows = lines.slice(1).map((line) => {
+        const values = parseCsvLine(line);
+        return headers.reduce((row, header, index) => {
+          row[header] = values[index] ?? '';
+          return row;
+        }, {});
+      });
+      return res.json(rows);
+    }
+
     res.json(response.data);
   } catch (error) {
     const status = error.response?.status || 502;
     const message = error.response?.data?.message || 'Kite API request failed';
+    console.error('Kite API request failed:', {
+      path: pathName,
+      status,
+      response: error.response?.data || null,
+      hasSessionAccessToken: Boolean(req.session.kiteAccessToken),
+    });
+    writeSessionDebugLog('kite-api-request-failed', {
+      path: pathName,
+      status,
+      response: error.response?.data || null,
+      hasSessionAccessToken: Boolean(req.session.kiteAccessToken),
+    });
     if (status === 403) {
       req.session.kiteAccessToken = null;
+      writeSessionDebugLog('session-token-cleared', { reason: 'kite-api-403' });
       return res.status(401).json({ error: 'Kite session expired or is invalid. Please connect Kite again.' });
     }
     res.status(status).json({ error: message });
@@ -114,10 +221,48 @@ app.post('/api/kite/connect', async (req, res) => {
 
   try {
     const sessionData = await exchangeRequestToken(apiKey.trim(), apiSecret.trim(), requestToken.trim());
-    req.session.kiteApiKey = apiKey.trim();
-    req.session.kiteAccessToken = sessionData.access_token;
-    req.session.kiteLoginAt = Date.now();
-    req.session.save(() => res.json({ authenticated: true }));
+    if (!sessionData || !sessionData.access_token) {
+      return res.status(401).json({ error: 'Kite did not return an access token. The request token may be expired or invalid.' });
+    }
+
+    console.log('Kite token exchange response keys:', Object.keys(sessionData));
+    writeSessionDebugLog('token-exchange-success', {
+      responseKeys: Object.keys(sessionData),
+      hasAccessToken: Boolean(sessionData.access_token),
+      accessTokenLength: sessionData.access_token ? sessionData.access_token.length : 0,
+    });
+    req.session.regenerate((regenerateError) => {
+      if (regenerateError) {
+        console.error('Failed to regenerate Kite session:', regenerateError);
+        return res.status(500).json({ error: 'Failed to regenerate Kite session', details: regenerateError.message });
+      }
+
+      req.session.kiteApiKey = apiKey.trim();
+      req.session.kiteAccessToken = sessionData.access_token;
+      req.session.kiteLoginAt = Date.now();
+      console.log('Kite session written:', {
+        kiteApiKey: req.session.kiteApiKey,
+        hasAccessToken: Boolean(req.session.kiteAccessToken),
+        accessTokenLength: req.session.kiteAccessToken ? req.session.kiteAccessToken.length : 0,
+        kiteLoginAt: req.session.kiteLoginAt,
+      });
+      writeSessionDebugLog('session-written', {
+        hasAccessToken: Boolean(req.session.kiteAccessToken),
+        accessTokenLength: req.session.kiteAccessToken ? req.session.kiteAccessToken.length : 0,
+        kiteLoginAt: req.session.kiteLoginAt,
+      });
+
+      req.session.save((saveError) => {
+        if (saveError) {
+          console.error('Failed to save Kite session:', saveError);
+          return res.status(500).json({
+            error: 'Failed to save Kite session',
+            details: saveError?.message || String(saveError),
+          });
+        }
+        return res.json({ authenticated: true, accessTokenStored: true });
+      });
+    });
   } catch (error) {
     console.error('Kite request-token exchange failed:', error.response?.data || error.message);
     const message = error.response?.data?.message || 'Kite rejected the request token';
@@ -144,10 +289,39 @@ app.get('/api/kite/callback', async (req, res) => {
 
   try {
     const sessionData = await exchangeRequestToken(kiteApiKey, kiteApiSecret, requestToken);
-    req.session.kiteApiKey = kiteApiKey;
-    req.session.kiteAccessToken = sessionData.access_token;
-    req.session.kiteLoginAt = Date.now();
-    req.session.save(() => res.redirect(`${frontendUrl}/?kite=connected`));
+    if (!sessionData || !sessionData.access_token) {
+      return res.redirect(`${frontendUrl}/?kite_error=invalid_access_token`);
+    }
+
+    req.session.regenerate((regenerateError) => {
+      if (regenerateError) {
+        console.error('Failed to regenerate session in callback flow:', regenerateError);
+        return res.redirect(`${frontendUrl}/?kite_error=session_regenerate_failed`);
+      }
+
+      req.session.kiteApiKey = kiteApiKey;
+      req.session.kiteAccessToken = sessionData.access_token;
+      req.session.kiteLoginAt = Date.now();
+      console.log('Kite callback session written:', {
+        kiteApiKey: req.session.kiteApiKey,
+        hasAccessToken: Boolean(req.session.kiteAccessToken),
+        accessTokenLength: req.session.kiteAccessToken ? req.session.kiteAccessToken.length : 0,
+        kiteLoginAt: req.session.kiteLoginAt,
+      });
+      writeSessionDebugLog('session-written', {
+        flow: 'callback',
+        hasAccessToken: Boolean(req.session.kiteAccessToken),
+        accessTokenLength: req.session.kiteAccessToken ? req.session.kiteAccessToken.length : 0,
+        kiteLoginAt: req.session.kiteLoginAt,
+      });
+      req.session.save((saveError) => {
+        if (saveError) {
+          console.error('Failed to save Kite session in callback flow:', saveError);
+          return res.redirect(`${frontendUrl}/?kite_error=session_save_failed`);
+        }
+        return res.redirect(`${frontendUrl}/?kite=connected`);
+      });
+    });
   } catch (error) {
     console.error('Kite token exchange failed:', error.response?.data || error.message);
     res.redirect(`${frontendUrl}/?kite_error=token_exchange_failed`);
@@ -182,7 +356,7 @@ app.get('/api/kite/instruments', requireKiteSession, (req, res) => {
   if (req.query.exchange) params.exchange = req.query.exchange;
   if (req.query.segment) params.segment = req.query.segment;
   if (req.query.instrument_type) params.instrument_type = req.query.instrument_type;
-  proxyKiteRequest(req, res, '/instruments', params);
+  proxyKiteRequest(req, res, '/instruments', params, { responseType: 'text', parseCsv: true });
 });
 
 app.get('/api/kite/instruments/historical', requireKiteSession, (req, res) => {
@@ -197,12 +371,14 @@ app.get('/api/kite/instruments/historical', requireKiteSession, (req, res) => {
     return res.status(400).json({ error: 'instrument_token, from, and to are required' });
   }
 
-  proxyKiteRequest(req, res, '/instruments/historical', {
-    instrument_token: instrumentToken,
-    interval,
-    from,
-    to,
-  });
+  const pathName = `/instruments/historical/${encodeURIComponent(instrumentToken)}/${encodeURIComponent(interval)}`;
+  const query = {};
+  if (from) query.from = from;
+  if (to) query.to = to;
+  if (req.query.continuous !== undefined) query.continuous = req.query.continuous;
+  if (req.query.oi !== undefined) query.oi = req.query.oi;
+
+  proxyKiteRequest(req, res, pathName, query);
 });
 
 app.get('/instruments/historical', requireKiteSession, (req, res) => {

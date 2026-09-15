@@ -59,30 +59,39 @@ class KiteAPI {
         },
       });
 
-      const instruments = Array.isArray(response.data?.data) ? response.data.data : [];
+      const instruments = Array.isArray(response.data) ? response.data : [];
+      const now = new Date();
+      const earliestExpiry = new Date(now.getFullYear(), now.getMonth() - 2, 1);
       const valid = instruments.filter((instrument) => {
         const tradingsymbol = String(instrument.tradingsymbol || '').toUpperCase();
         const name = String(instrument.name || '').toUpperCase();
         const instrumentType = String(instrument.instrument_type || '').toUpperCase();
+        const expiry = String(instrument.expiry || '');
+        const expiryDate = expiry ? new Date(`${expiry}T00:00:00`) : null;
         const strike = Number(instrument.strike);
 
         return instrument.exchange === 'NFO'
+          && instrument.segment === 'NFO-OPT'
           && ['CE', 'PE'].includes(instrumentType)
           && Number.isFinite(strike)
+          && expiryDate
+          && !Number.isNaN(expiryDate.getTime())
+          && expiryDate >= earliestExpiry
+          && expiryDate <= now
           && (name.includes('NIFTY') || tradingsymbol.includes('NIFTY'));
       });
 
-      const uniqueStrikes = [...new Map(valid.map((item) => [Number(item.strike), item])).values()]
+      return valid
         .map((item) => ({
           strike: Number(item.strike),
           instrumentToken: item.instrument_token,
           tradingsymbol: item.tradingsymbol,
           type: String(item.instrument_type || '').toUpperCase(),
-          label: `${item.tradingsymbol}`,
+          expiry: item.expiry,
+          lotSize: Number(item.lot_size) || 1,
+          label: `${item.expiry} • ${item.strike} ${String(item.instrument_type || '').toUpperCase()} • ${item.tradingsymbol}`,
         }))
-        .sort((a, b) => a.strike - b.strike);
-
-      return uniqueStrikes;
+        .sort((a, b) => a.expiry.localeCompare(b.expiry) || a.strike - b.strike || a.type.localeCompare(b.type));
     } catch (error) {
       console.error('Error fetching Nifty strike options:', error);
       throw new Error('Failed to fetch Nifty strikes.');
@@ -97,7 +106,7 @@ class KiteAPI {
         },
       });
 
-      const instruments = Array.isArray(response.data?.data) ? response.data.data : [];
+      const instruments = Array.isArray(response.data) ? response.data : [];
       const filtered = instruments.filter((instrument) => {
         const name = String(instrument.name || '').toUpperCase();
         const tradingsymbol = String(instrument.tradingsymbol || '').toUpperCase();
@@ -128,7 +137,7 @@ class KiteAPI {
           to,
         },
       });
-      const data = response.data?.data || response.data || [];
+      const data = response.data?.data?.candles ?? response.data?.candles ?? response.data ?? [];
       return Array.isArray(data) ? data : [];
     } catch (error) {
       console.error('Error fetching historical candle data:', error);

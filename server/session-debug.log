@@ -1,0 +1,16 @@
+{"timestamp":"2026-09-15T21:35:38.341Z","event":"token-exchange-success","responseKeys":["user_type","email","user_name","user_shortname","broker","exchanges","products","order_types","avatar_url","user_id","api_key","access_token","public_token","refresh_token","enctoken","login_time","meta"],"hasAccessToken":true,"accessTokenLength":32}
+{"timestamp":"2026-09-15T21:35:38.343Z","event":"session-written","hasAccessToken":true,"accessTokenLength":32,"kiteLoginAt":1789508138343}
+{"timestamp":"2026-09-15T21:35:39.255Z","event":"protected-session-check","hasAccessToken":true,"kiteApiKey":"9p2umj3cp58xrf35","kiteLoginAt":1789508138343}
+{"timestamp":"2026-09-15T21:35:39.295Z","event":"protected-session-check","hasAccessToken":true,"kiteApiKey":"9p2umj3cp58xrf35","kiteLoginAt":1789508138343}
+{"timestamp":"2026-09-15T21:35:39.511Z","event":"protected-session-check","hasAccessToken":true,"kiteApiKey":"9p2umj3cp58xrf35","kiteLoginAt":1789508138343}
+{"timestamp":"2026-09-15T21:35:39.682Z","event":"protected-session-check","hasAccessToken":true,"kiteApiKey":"9p2umj3cp58xrf35","kiteLoginAt":1789508138343}
+{"timestamp":"2026-09-15T21:35:39.685Z","event":"protected-session-check","hasAccessToken":true,"kiteApiKey":"9p2umj3cp58xrf35","kiteLoginAt":1789508138343}
+{"timestamp":"2026-09-15T21:35:39.745Z","event":"protected-session-check","hasAccessToken":true,"kiteApiKey":"9p2umj3cp58xrf35","kiteLoginAt":1789508138343}
+{"timestamp":"2026-09-15T21:35:39.778Z","event":"protected-session-check","hasAccessToken":true,"kiteApiKey":"9p2umj3cp58xrf35","kiteLoginAt":1789508138343}
+{"timestamp":"2026-09-15T21:35:41.380Z","event":"protected-session-check","hasAccessToken":true,"kiteApiKey":"9p2umj3cp58xrf35","kiteLoginAt":1789508138343}
+{"timestamp":"2026-09-15T21:35:42.740Z","event":"protected-session-check","hasAccessToken":true,"kiteApiKey":"9p2umj3cp58xrf35","kiteLoginAt":1789508138343}
+{"timestamp":"2026-09-15T21:35:43.196Z","event":"protected-session-check","hasAccessToken":true,"kiteApiKey":"9p2umj3cp58xrf35","kiteLoginAt":1789508138343}
+{"timestamp":"2026-09-15T21:35:45.766Z","event":"protected-session-check","hasAccessToken":true,"kiteApiKey":"9p2umj3cp58xrf35","kiteLoginAt":1789508138343}
+{"timestamp":"2026-09-15T21:35:45.801Z","event":"protected-session-check","hasAccessToken":true,"kiteApiKey":"9p2umj3cp58xrf35","kiteLoginAt":1789508138343}
+{"timestamp":"2026-09-15T21:35:46.256Z","event":"protected-session-check","hasAccessToken":true,"kiteApiKey":"9p2umj3cp58xrf35","kiteLoginAt":1789508138343}
+{"timestamp":"2026-09-15T21:35:48.359Z","event":"protected-session-check","hasAccessToken":true,"kiteApiKey":"9p2umj3cp58xrf35","kiteLoginAt":1789508138343}

@@ -2,20 +2,347 @@ import React, { useState, useEffect } from 'react';
 import { Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
-  CategoryScale,
+  LineElement,
   LinearScale,
   PointElement,
-  LineElement,
-  Title,
+  TimeScale,
   Tooltip,
   Legend,
 } from 'chart.js';
+import 'chartjs-adapter-date-fns';
+import { createChart, createSeriesMarkers, CandlestickSeries, LineSeries } from 'lightweight-charts';
 import './PCRAnalysis.css';
 import KiteAPI from '../services/kiteAPI';
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
+ChartJS.register(
+  LinearScale,
+  TimeScale,
+  LineElement,
+  PointElement,
+  Tooltip,
+  Legend,
+);
 
 const TIMEFRAME_OPTIONS = ['minute', '3minute', '5minute', '10minute', '15minute', '30minute', '60minute', 'day'];
+
+function calculateEma(candles, period) {
+  const multiplier = 2 / (period + 1);
+  let ema = candles[0]?.c || 0;
+  return candles.map((candle, index) => {
+    ema = index === 0 ? candle.c : ((candle.c - ema) * multiplier) + ema;
+    return { time: Math.floor(candle.x / 1000), value: ema };
+  });
+}
+
+function calculateRsi(candles, period = 14) {
+  return candles.map((candle, index) => {
+    if (index < period) return { x: candle.x, y: null };
+    let gains = 0;
+    let losses = 0;
+    for (let offset = index - period + 1; offset <= index; offset += 1) {
+      const change = candles[offset].c - candles[offset - 1].c;
+      if (change >= 0) gains += change;
+      else losses -= change;
+    }
+    const averageGain = gains / period;
+    const averageLoss = losses / period;
+    const value = averageLoss === 0 ? 100 : 100 - (100 / (1 + (averageGain / averageLoss)));
+    return { x: candle.x, y: Number(value.toFixed(2)) };
+  });
+}
+
+function detectCandlestickPatterns(candles, index) {
+  const current = candles[index];
+  const previous = candles[index - 1];
+  const beforePrevious = candles[index - 2];
+  const threeBack = candles[index - 3];
+  if (!current || !previous) return { bullish: [], bearish: [], neutral: [] };
+  const body = Math.abs(current.c - current.o);
+  const range = Math.max(current.h - current.l, 0.0001);
+  const upperWick = current.h - Math.max(current.o, current.c);
+  const lowerWick = Math.min(current.o, current.c) - current.l;
+  const bullish = [];
+  const bearish = [];
+  const neutral = [];
+  const isBull = current.c > current.o;
+  const isBear = current.c < current.o;
+  const smallBody = body <= range * 0.1;
+  const previousRange = previous ? Math.max(previous.h - previous.l, 0.0001) : 0.0001;
+  const previousBody = previous ? Math.abs(previous.c - previous.o) : 0;
+  const previousDoji = previousBody <= previousRange * 0.1;
+  const bullishEngulfing = isBull && previous.c < previous.o && current.o <= previous.c && current.c >= previous.o;
+  const bearishEngulfing = isBear && previous.c > previous.o && current.o >= previous.c && current.c <= previous.o;
+
+  if (smallBody) neutral.push('Doji');
+  if (smallBody && lowerWick >= range * 0.6) bullish.push('Dragonfly doji');
+  if (smallBody && upperWick >= range * 0.6) bearish.push('Gravestone doji');
+  if (body <= range * 0.35 && upperWick >= body && lowerWick >= body) neutral.push('Spinning top');
+  if (isBull && body >= range * 0.8) bullish.push('Bullish marubozu');
+  if (isBear && body >= range * 0.8) bearish.push('Bearish marubozu');
+  if (isBull && lowerWick >= body * 2 && upperWick <= range * 0.25) bullish.push('Hammer');
+  if (isBull && upperWick >= body * 2 && lowerWick <= range * 0.25) bullish.push('Inverted hammer');
+  if (isBear && lowerWick >= body * 2 && upperWick <= range * 0.25) bearish.push('Hanging man');
+  if (isBear && upperWick >= body * 2 && lowerWick <= range * 0.25) bearish.push('Shooting star');
+  if (bullishEngulfing) bullish.push('Bullish engulfing');
+  if (bearishEngulfing) bearish.push('Bearish engulfing');
+  if (previous.c < previous.o && isBull && current.o <= previous.c && current.c > (previous.o + previous.c) / 2) bullish.push('Piercing line');
+  if (previous.c > previous.o && isBear && current.o >= previous.c && current.c < (previous.o + previous.c) / 2) bearish.push('Dark cloud cover');
+  if (Math.abs(current.l - previous.l) / Math.max(previous.l, 0.0001) < 0.002 && isBull) bullish.push('Tweezer bottom');
+  if (Math.abs(current.h - previous.h) / Math.max(previous.h, 0.0001) < 0.002 && isBear) bearish.push('Tweezer top');
+  if (beforePrevious) {
+    if (beforePrevious.c < beforePrevious.o && previous.c < previous.o && isBull && current.c > beforePrevious.o) bullish.push('Morning star');
+    if (beforePrevious.c > beforePrevious.o && previous.c > previous.o && isBear && current.c < beforePrevious.o) bearish.push('Evening star');
+    if (isBull && previous.c > previous.o && beforePrevious.c > beforePrevious.o) bullish.push('Three white soldiers');
+    if (isBear && previous.c < previous.o && beforePrevious.c < beforePrevious.o) bearish.push('Three black crows');
+    if (current.h < previous.h && current.l > previous.l) neutral.push('Inside bar');
+    if (current.h > previous.h && current.l < previous.l) neutral.push('Outside bar');
+    if (isBull && previous.c < previous.o && current.o > previous.o && current.c < previous.c) bearish.push('Bearish harami');
+    if (isBear && previous.c > previous.o && current.o < previous.o && current.c > previous.c) bullish.push('Bullish harami');
+    if (threeBack) {
+      const threeBackBear = threeBack.c < threeBack.o;
+      const threeBackBull = threeBack.c > threeBack.o;
+      const bullishHarami = threeBackBear && previousBody < Math.abs(threeBack.c - threeBack.o) * 0.6
+        && previous.o >= threeBack.c && previous.c <= threeBack.o;
+      const bearishHarami = threeBackBull && previousBody < Math.abs(threeBack.c - threeBack.o) * 0.6
+        && previous.o <= threeBack.c && previous.c >= threeBack.o;
+      if (threeBackBear && previousDoji && isBull && current.c > threeBack.o) bullish.push('Morning doji star');
+      if (threeBackBull && previousDoji && isBear && current.c < threeBack.o) bearish.push('Evening doji star');
+      if (threeBackBear && previousDoji && isBull && previous.l > threeBack.h && current.l > previous.h) bullish.push('Bullish abandoned baby');
+      if (threeBackBull && previousDoji && isBear && previous.h < threeBack.l && current.h < previous.l) bearish.push('Bearish abandoned baby');
+      if (bullishHarami && isBull && current.c > threeBack.o) bullish.push('Three inside up');
+      if (bearishHarami && isBear && current.c < threeBack.o) bearish.push('Three inside down');
+    }
+  }
+  return { bullish, bearish, neutral };
+}
+
+function findChartPatterns(candles) {
+  const recent = candles.slice(-40);
+  const highs = recent.filter((candle, index) => index > 0 && index < recent.length - 1 && candle.h >= recent[index - 1].h && candle.h >= recent[index + 1].h);
+  const lows = recent.filter((candle, index) => index > 0 && index < recent.length - 1 && candle.l <= recent[index - 1].l && candle.l <= recent[index + 1].l);
+  const matchLevel = (items, field) => items.length >= 2 && Math.abs(items.at(-1)[field] - items.at(-2)[field]) / Math.max(items.at(-2)[field], 0.0001) < 0.01;
+  const patterns = [];
+  if (highs.length >= 3 && matchLevel(highs, 'h')) patterns.push('Triple top');
+  else if (highs.length >= 2 && matchLevel(highs, 'h')) patterns.push('Double top');
+  if (lows.length >= 3 && matchLevel(lows, 'l')) patterns.push('Triple bottom');
+  else if (lows.length >= 2 && matchLevel(lows, 'l')) patterns.push('Double bottom');
+  if (highs.length >= 2 && lows.length >= 2) {
+    if (highs.at(-1).h < highs.at(-2).h && lows.at(-1).l > lows.at(-2).l) patterns.push('Symmetrical triangle');
+    if (highs.at(-1).h <= highs.at(-2).h && lows.at(-1).l > lows.at(-2).l) patterns.push('Descending triangle');
+    if (highs.at(-1).h > highs.at(-2).h && lows.at(-1).l >= lows.at(-2).l) patterns.push('Ascending triangle');
+  }
+  if (highs.length >= 3 && lows.length >= 2) {
+    const peakA = highs.at(-3).h;
+    const head = highs.at(-2).h;
+    const peakB = highs.at(-1).h;
+    if (head > peakA * 1.01 && head > peakB * 1.01) patterns.push('Head and shoulders');
+  }
+  if (lows.length >= 3 && highs.length >= 2) {
+    const troughA = lows.at(-3).l;
+    const head = lows.at(-2).l;
+    const troughB = lows.at(-1).l;
+    if (head < troughA * 0.99 && head < troughB * 0.99) patterns.push('Inverse head and shoulders');
+  }
+  const first = recent[0];
+  const last = recent.at(-1);
+  if (first && last) {
+    if (last.c > first.c && lows.length >= 2) patterns.push('Rising channel');
+    if (last.c < first.c && highs.length >= 2) patterns.push('Falling channel');
+  }
+  const closingPrices = recent.map(candle => candle.c);
+  const firstThird = closingPrices.slice(0, Math.max(2, Math.floor(closingPrices.length / 3)));
+  const middleThird = closingPrices.slice(Math.floor(closingPrices.length / 3), Math.floor((closingPrices.length * 2) / 3));
+  const finalThird = closingPrices.slice(Math.floor((closingPrices.length * 2) / 3));
+  const average = values => values.reduce((sum, value) => sum + value, 0) / Math.max(values.length, 1);
+  if (firstThird.length && middleThird.length && finalThird.length) {
+    const firstAverage = average(firstThird);
+    const middleAverage = average(middleThird);
+    const finalAverage = average(finalThird);
+    if (middleAverage < firstAverage * 0.98 && finalAverage > middleAverage * 1.02 && Math.abs(finalAverage - firstAverage) / firstAverage < 0.03) patterns.push('Rounding bottom');
+    if (middleAverage > firstAverage * 1.02 && finalAverage < middleAverage * 0.98 && Math.abs(finalAverage - firstAverage) / firstAverage < 0.03) patterns.push('Rounding top');
+  }
+  if (highs.length >= 2 && lows.length >= 2) {
+    const highSlope = highs.at(-1).h - highs.at(-2).h;
+    const lowSlope = lows.at(-1).l - lows.at(-2).l;
+    if (highSlope < 0 && lowSlope < 0 && Math.abs(highSlope) < Math.abs(lowSlope)) patterns.push('Rising wedge');
+    if (highSlope > 0 && lowSlope > 0 && Math.abs(highSlope) < Math.abs(lowSlope)) patterns.push('Falling wedge');
+  }
+  if (recent.length >= 8) {
+    const poleStart = recent[0].c;
+    const poleEnd = recent[Math.floor(recent.length / 2)].c;
+    const consolidation = recent.slice(Math.floor(recent.length / 2));
+    const consolidationRange = Math.max(...consolidation.map(candle => candle.h)) - Math.min(...consolidation.map(candle => candle.l));
+    const poleMove = Math.abs(poleEnd - poleStart);
+    const consolidationHighs = consolidation.filter((candle, index) => index > 0 && index < consolidation.length - 1
+      && candle.h >= consolidation[index - 1].h && candle.h >= consolidation[index + 1].h);
+    const consolidationLows = consolidation.filter((candle, index) => index > 0 && index < consolidation.length - 1
+      && candle.l <= consolidation[index - 1].l && candle.l <= consolidation[index + 1].l);
+    const consolidationHighSlope = consolidationHighs.length >= 2
+      ? consolidationHighs.at(-1).h - consolidationHighs.at(-2).h : 0;
+    const consolidationLowSlope = consolidationLows.length >= 2
+      ? consolidationLows.at(-1).l - consolidationLows.at(-2).l : 0;
+    if (poleMove > 0 && consolidationRange < poleMove * 0.6) {
+      if (poleEnd > poleStart) patterns.push('Bull flag');
+      if (poleEnd < poleStart) patterns.push('Bear flag');
+      if (consolidationHighSlope && consolidationLowSlope
+        && Math.sign(consolidationHighSlope) !== Math.sign(consolidationLowSlope)) {
+        patterns.push(poleEnd > poleStart ? 'Bullish pennant' : 'Bearish pennant');
+      }
+    }
+  }
+  if (recent.length >= 12) {
+    const cupStart = recent[0].c;
+    const cupMiddle = recent[Math.floor(recent.length / 2)].c;
+    const cupEnd = recent.at(-1).c;
+    if (cupMiddle < cupStart * 0.97 && cupEnd > cupStart * 0.98) patterns.push('Cup and handle');
+    const highRange = Math.max(...recent.map(candle => candle.h));
+    const lowRange = Math.min(...recent.map(candle => candle.l));
+    if ((highRange - lowRange) / Math.max(lowRange, 0.0001) < 0.04) patterns.push('Rectangle trading range');
+  }
+  return patterns;
+}
+
+function classifyChartPatterns(patterns) {
+  const bullishNames = ['bottom', 'ascending', 'rising', 'bullish', 'inverse head', 'falling wedge', 'bull flag', 'bullish pennant', 'cup and handle'];
+  const bearishNames = ['top', 'descending', 'falling', 'bearish', 'head and shoulders', 'rising wedge', 'bear flag', 'bearish pennant'];
+  return {
+    bullish: patterns.filter(pattern => bullishNames.some(name => pattern.toLowerCase().includes(name))),
+    bearish: patterns.filter(pattern => bearishNames.some(name => pattern.toLowerCase().includes(name))),
+  };
+}
+
+function getMarketConfirmations(candles) {
+  const ema20 = calculateEma(candles, 20).at(-1)?.value || 0;
+  const ema50 = calculateEma(candles, 50).at(-1)?.value || 0;
+  const rsi = calculateRsi(candles, 14).at(-1)?.y;
+  const latestClose = candles.at(-1)?.c || 0;
+  const validRsi = Number.isFinite(rsi);
+  return {
+    ema20,
+    ema50,
+    rsi,
+    bullish: ema20 > ema50 && latestClose > ema20 && validRsi && rsi >= 50 && rsi <= 70,
+    bearish: ema20 < ema50 && latestClose < ema20 && validRsi && rsi >= 30 && rsi <= 50,
+  };
+}
+
+function calculateTradeSignal(candles) {
+  if (candles.length < 10) return { action: 'HOLD', pattern: 'Not enough candles', reason: 'Waiting for more OHLC data' };
+  const candlePatterns = detectCandlestickPatterns(candles, candles.length - 1);
+  const chartPatterns = findChartPatterns(candles);
+  const shortAverage = candles.slice(-3).reduce((sum, candle) => sum + candle.c, 0) / 3;
+  const longAverage = candles.slice(-10).reduce((sum, candle) => sum + candle.c, 0) / 10;
+  const latest = candles.at(-1);
+  const previous = candles.at(-2);
+  const trendUp = shortAverage > longAverage && latest.c > previous.c;
+  const trendDown = shortAverage < longAverage && latest.c < previous.c;
+  const chartDirection = classifyChartPatterns(chartPatterns);
+  const market = getMarketConfirmations(candles);
+  if (candlePatterns.bullish.length && chartDirection.bullish.length && trendUp && market.bullish) {
+    return {
+      action: 'BUY',
+      pattern: `Candle: ${candlePatterns.bullish.join(', ')} | Chart: ${chartDirection.bullish.join(', ')} | EMA20 > EMA50 | RSI14 ${market.rsi.toFixed(1)}`,
+      reason: 'Candle, chart, EMA trend, RSI, and price trend all confirm BUY',
+    };
+  }
+  if (candlePatterns.bearish.length && chartDirection.bearish.length && trendDown && market.bearish) {
+    return {
+      action: 'SELL',
+      pattern: `Candle: ${candlePatterns.bearish.join(', ')} | Chart: ${chartDirection.bearish.join(', ')} | EMA20 < EMA50 | RSI14 ${market.rsi.toFixed(1)}`,
+      reason: 'Candle, chart, EMA trend, RSI, and price trend all confirm SELL',
+    };
+  }
+  return { action: 'HOLD', pattern: [...candlePatterns.neutral, ...chartPatterns, 'No confirmation'].join(', '), reason: 'Patterns detected, but directional confirmation is missing' };
+}
+
+function evaluateSignalWithFutureCandles(signal, future, target, stopLoss) {
+  if (future.length === 0) {
+    return { outcome: 'Pending', evaluation: 'Waiting for the next candle high/low' };
+  }
+
+  for (const [futureIndex, candle] of future.entries()) {
+    const hitStop = signal.action === 'BUY' ? candle.l <= stopLoss : candle.h >= stopLoss;
+    const hitTarget = signal.action === 'BUY' ? candle.h >= target : candle.l <= target;
+    const triggerTime = new Date(candle.x).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    if (hitStop && hitTarget) {
+      return {
+        outcome: 'Ambiguous',
+        evaluation: `${triggerTime}: high/low touched both target and stop`,
+        candlesToOutcome: futureIndex + 1,
+      };
+    }
+    if (hitTarget) {
+      const triggerPrice = signal.action === 'BUY' ? candle.h : candle.l;
+      return {
+        outcome: 'True',
+        evaluation: `${triggerTime}: ${signal.action === 'BUY' ? 'high' : 'low'} ₹${triggerPrice.toFixed(2)} reached target`,
+        candlesToOutcome: futureIndex + 1,
+      };
+    }
+    if (hitStop) {
+      const triggerPrice = signal.action === 'BUY' ? candle.l : candle.h;
+      const adverseMove = Math.abs(triggerPrice - stopLoss);
+      return {
+        outcome: 'False',
+        evaluation: `${triggerTime}: ${signal.action === 'BUY' ? 'low' : 'high'} ₹${triggerPrice.toFixed(2)} hit stop ₹${stopLoss.toFixed(2)} (₹${adverseMove.toFixed(2)} beyond stop)`,
+        candlesToOutcome: futureIndex + 1,
+      };
+    }
+  }
+  return {
+    outcome: 'Pending',
+    evaluation: `Checked ${future.length} future candle${future.length === 1 ? '' : 's'}; target/stop not touched yet`,
+  };
+}
+
+function getStrategyReview(signalRows) {
+  const completed = signalRows.filter(signal => signal.outcome === 'True' || signal.outcome === 'False');
+  const failed = completed.filter(signal => signal.outcome === 'False');
+  if (failed.length === 0) return [];
+
+  const failedOnFirstFutureCandle = failed.filter(signal => signal.candlesToOutcome === 1).length;
+  const failureRate = (failed.length / completed.length) * 100;
+  const review = [`${failed.length} of ${completed.length} completed signals stopped out (${failureRate.toFixed(1)}%).`];
+  if (failedOnFirstFutureCandle > 0) {
+    review.push(`${failedOnFirstFutureCandle} losses hit the stop on the first next candle; test a confirmation entry after the signal candle.`);
+  }
+  review.push('Test results by timeframe and market regime, then compare an ATR-based stop with the current recent-range stop before changing live rules.');
+  return review;
+}
+
+function buildSignalRows(candles) {
+  return candles
+    .map((_, index) => {
+      if (index < 10) return null;
+      const window = candles.slice(0, index + 1).slice(-40);
+      const signal = calculateTradeSignal(window);
+      if (signal.action === 'HOLD') return null;
+      const entry = candles[index].c;
+      const recent = candles.slice(Math.max(0, index - 14), index + 1);
+      const averageRange = recent.reduce((sum, candle) => sum + (candle.h - candle.l), 0) / Math.max(recent.length, 1);
+      const recentLow = Math.min(...recent.map(candle => candle.l));
+      const recentHigh = Math.max(...recent.map(candle => candle.h));
+      const risk = Math.max(averageRange * 1.5, entry * 0.003);
+      const stopLoss = signal.action === 'BUY'
+        ? Math.min(recentLow, entry - risk)
+        : Math.max(recentHigh, entry + risk);
+      const target = signal.action === 'BUY'
+        ? entry + ((entry - stopLoss) * 2)
+        : entry - ((stopLoss - entry) * 2);
+      const future = candles.slice(index + 1);
+      const result = evaluateSignalWithFutureCandles(signal, future, target, stopLoss);
+      return {
+        ...signal,
+        time: candles[index].x,
+        entry,
+        target,
+        stopLoss,
+        ...result,
+      };
+    })
+    .filter(Boolean)
+    .reverse();
+}
 
 function PCRAnalysis({ apiKey }) {
   const [pcrData, setPcrData] = useState(null);
@@ -23,7 +350,12 @@ function PCRAnalysis({ apiKey }) {
   const [strikeOptions, setStrikeOptions] = useState([]);
   const [selectedStrike, setSelectedStrike] = useState(null);
   const [selectedInterval, setSelectedInterval] = useState('5minute');
-  const [chartData, setChartData] = useState(null);
+  const [candleData, setCandleData] = useState([]);
+  const [closeChartData, setCloseChartData] = useState(null);
+  const [rsiChartData, setRsiChartData] = useState(null);
+  const [tradeSignal, setTradeSignal] = useState({ action: 'HOLD', pattern: 'Waiting for data', reason: '' });
+  const [signalRows, setSignalRows] = useState([]);
+  const candleChartRef = React.useRef(null);
   const [latestCandle, setLatestCandle] = useState(null);
   const [loading, setLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(false);
@@ -45,36 +377,43 @@ function PCRAnalysis({ apiKey }) {
       const kiteAPI = new KiteAPI();
       const optionChain = await kiteAPI.getNiftyOptionChain();
       const selectedStrikeNumber = Number(strike.strike);
-      const nearTheMoney = optionChain.filter((instrument) => {
-        const diff = Math.abs(Number(instrument.strike) - selectedStrikeNumber);
-        return diff <= 100;
+      const selectedExpiry = String(strike.expiry || '');
+      const selectedContracts = optionChain.filter((instrument) => {
+        return Number(instrument.strike) === selectedStrikeNumber
+          && String(instrument.expiry || '') === selectedExpiry
+          && ['CE', 'PE'].includes(String(instrument.instrument_type || '').toUpperCase());
       });
 
-      if (nearTheMoney.length === 0) {
+      if (selectedContracts.length === 0) {
         return;
       }
 
-      const optionTokens = nearTheMoney.map((instrument) => String(instrument.instrument_token)).filter(Boolean);
-      if (optionTokens.length === 0) {
+      const quoteKeys = selectedContracts.map((instrument) => `${instrument.exchange}:${instrument.tradingsymbol}`);
+      if (quoteKeys.length === 0) {
         return;
       }
 
-      const quotes = await kiteAPI.getQuote(optionTokens);
-      const values = Object.values(quotes || {});
-      const putVolume = values
-        .filter((quote) => String(quote?.instrument_type || '').toUpperCase() === 'PE')
-        .reduce((sum, quote) => sum + Number(quote?.volume || 0), 0);
-      const callVolume = values
-        .filter((quote) => String(quote?.instrument_type || '').toUpperCase() === 'CE')
-        .reduce((sum, quote) => sum + Number(quote?.volume || 0), 0);
-      const putOI = values
-        .filter((quote) => String(quote?.instrument_type || '').toUpperCase() === 'PE')
-        .reduce((sum, quote) => sum + Number(quote?.oi || 0), 0);
-      const callOI = values
-        .filter((quote) => String(quote?.instrument_type || '').toUpperCase() === 'CE')
-        .reduce((sum, quote) => sum + Number(quote?.oi || 0), 0);
+      const quotes = await kiteAPI.getQuote(quoteKeys);
+      const quoteEntries = selectedContracts.map((instrument) => ({
+        type: String(instrument.instrument_type || '').toUpperCase(),
+        quote: quotes[`${instrument.exchange}:${instrument.tradingsymbol}`] || {},
+      }));
+      const putVolume = quoteEntries
+        .filter(({ type }) => type === 'PE')
+        .reduce((sum, { quote }) => sum + Number(quote.volume || 0), 0);
+      const callVolume = quoteEntries
+        .filter(({ type }) => type === 'CE')
+        .reduce((sum, { quote }) => sum + Number(quote.volume || 0), 0);
+      const putOI = quoteEntries
+        .filter(({ type }) => type === 'PE')
+        .reduce((sum, { quote }) => sum + Number(quote.oi || 0), 0);
+      const callOI = quoteEntries
+        .filter(({ type }) => type === 'CE')
+        .reduce((sum, { quote }) => sum + Number(quote.oi || 0), 0);
 
       const nextData = {
+        strike: selectedStrikeNumber,
+        expiry: selectedExpiry,
         put_volume: putVolume,
         call_volume: callVolume,
         put_oi: putOI,
@@ -96,27 +435,35 @@ function PCRAnalysis({ apiKey }) {
 
     try {
       const kiteAPI = new KiteAPI();
-      const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-      const to = new Date();
+      const expiryDate = strike.expiry ? new Date(`${strike.expiry}T23:59:59`) : null;
+      const hasExpired = expiryDate && !Number.isNaN(expiryDate.getTime()) && expiryDate < new Date();
+      const to = hasExpired ? expiryDate : new Date();
+      if (!hasExpired) to.setDate(to.getDate() - 1);
+      const from = new Date(to);
+      from.setDate(from.getDate() - 30);
       const candles = await kiteAPI.getHistoricalData({
         instrumentToken: strike.instrumentToken,
         interval,
-        from: formatDate(from),
-        to: formatDate(to),
+        from: formatDateTime(from, '09:15:00'),
+        to: formatDateTime(to, '23:59:59'),
       });
 
       const normalized = Array.isArray(candles) ? candles : [];
-      const labels = normalized.map((item) => {
+      const candleData = normalized.map((item) => {
         const timestamp = Array.isArray(item) ? item[0] : item?.timestamp;
-        const date = new Date(timestamp);
-        if (interval === 'day') return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-        return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-      });
-
-      const values = normalized.map((item) => {
-        const close = Array.isArray(item) ? item[4] : item?.close;
-        return Number(close) || 0;
-      });
+        const dateValue = new Date(timestamp).getTime();
+        return {
+          x: dateValue,
+          o: Number(Array.isArray(item) ? item[1] : item?.open),
+          h: Number(Array.isArray(item) ? item[2] : item?.high),
+          l: Number(Array.isArray(item) ? item[3] : item?.low),
+          c: Number(Array.isArray(item) ? item[4] : item?.close),
+        };
+      }).filter(candle => Number.isFinite(candle.x)
+        && Number.isFinite(candle.o)
+        && Number.isFinite(candle.h)
+        && Number.isFinite(candle.l)
+        && Number.isFinite(candle.c));
 
       const latest = normalized[normalized.length - 1];
       setLatestCandle(
@@ -125,16 +472,32 @@ function PCRAnalysis({ apiKey }) {
           : latest || null
       );
 
-      setChartData({
-        labels,
+      setCandleData(candleData);
+      setTradeSignal(calculateTradeSignal(candleData));
+      setSignalRows(buildSignalRows(candleData));
+      setCloseChartData({
         datasets: [{
-          label: `${strike.label} • ${interval}`,
-          data: values,
-          borderColor: '#667eea',
-          backgroundColor: 'rgba(102, 126, 234, 0.15)',
+          label: `${strike.label} close • ${interval}`,
+          data: candleData.map(candle => ({ x: candle.x, y: candle.c })),
+          borderColor: '#2563eb',
+          backgroundColor: 'rgba(37, 99, 235, 0.12)',
           borderWidth: 2,
           pointRadius: 0,
-          tension: 0.2,
+          pointHoverRadius: 4,
+          tension: 0.15,
+          fill: true,
+        }],
+      });
+      setRsiChartData({
+        datasets: [{
+          label: 'RSI (14)',
+          data: calculateRsi(candleData),
+          borderColor: '#a78bfa',
+          backgroundColor: 'rgba(167, 139, 250, 0.12)',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.15,
+          spanGaps: true,
         }],
       });
     } catch (err) {
@@ -144,6 +507,83 @@ function PCRAnalysis({ apiKey }) {
       setChartLoading(false);
     }
   };
+
+  useEffect(() => {
+    const container = candleChartRef.current;
+    if (!container || candleData.length === 0) return undefined;
+
+    const chart = createChart(container, {
+      width: container.clientWidth,
+      height: 360,
+      layout: { background: { color: '#ffffff' }, textColor: '#475569' },
+      grid: {
+        vertLines: { color: '#eef2f7' },
+        horzLines: { color: '#eef2f7' },
+      },
+      rightPriceScale: {
+        borderColor: '#cbd5e1',
+        scaleMargins: { top: 0.1, bottom: 0.1 },
+      },
+      timeScale: {
+        borderColor: '#cbd5e1',
+        timeVisible: selectedInterval !== 'day',
+        secondsVisible: false,
+      },
+    });
+    const series = chart.addSeries(CandlestickSeries, {
+      upColor: '#15803d',
+      downColor: '#dc2626',
+      borderVisible: false,
+      wickUpColor: '#15803d',
+      wickDownColor: '#dc2626',
+      priceFormat: { type: 'price', precision: 2, minMove: 0.05 },
+    });
+    series.setData(candleData.map(candle => ({
+      time: Math.floor(candle.x / 1000),
+      open: candle.o,
+      high: candle.h,
+      low: candle.l,
+      close: candle.c,
+    })));
+    const ema20 = chart.addSeries(LineSeries, { color: '#fbbf24', lineWidth: 2, title: 'EMA 20', priceLineVisible: false });
+    const ema50 = chart.addSeries(LineSeries, { color: '#38bdf8', lineWidth: 2, title: 'EMA 50', priceLineVisible: false });
+    ema20.setData(calculateEma(candleData, 20));
+    ema50.setData(calculateEma(candleData, 50));
+    const markers = [];
+    candleData.forEach((candle, index) => {
+      if (index < 1) return;
+      const window = candleData.slice(Math.max(0, index - 49), index + 1);
+      const candlePatterns = detectCandlestickPatterns(window, window.length - 1);
+      const chartPatterns = findChartPatterns(window);
+      const chartDirection = classifyChartPatterns(chartPatterns);
+      const shortAverage = window.slice(-3).reduce((sum, item) => sum + item.c, 0) / Math.min(window.length, 3);
+      const longAverage = window.reduce((sum, item) => sum + item.c, 0) / window.length;
+      const trendUp = shortAverage > longAverage && candle.c > window[window.length - 2].c;
+      const trendDown = shortAverage < longAverage && candle.c < window[window.length - 2].c;
+      const market = getMarketConfirmations(window);
+      if (candlePatterns.bullish.length > 0 && chartDirection.bullish.length > 0 && trendUp && market.bullish) {
+        const text = `BUY | Candle: ${candlePatterns.bullish.join(', ')} | Chart: ${chartDirection.bullish.join(', ')} | EMA20 > EMA50 | RSI14 ${market.rsi.toFixed(1)} | All confirmed`;
+        markers.push({ time: Math.floor(candle.x / 1000), position: 'belowBar', color: '#15803d', shape: 'arrowUp', text });
+      } else if (candlePatterns.bearish.length > 0 && chartDirection.bearish.length > 0 && trendDown && market.bearish) {
+        const text = `SELL | Candle: ${candlePatterns.bearish.join(', ')} | Chart: ${chartDirection.bearish.join(', ')} | EMA20 < EMA50 | RSI14 ${market.rsi.toFixed(1)} | All confirmed`;
+        markers.push({ time: Math.floor(candle.x / 1000), position: 'aboveBar', color: '#dc2626', shape: 'arrowDown', text });
+      }
+    });
+    const markerSeries = createSeriesMarkers(series, markers);
+    chart.timeScale().fitContent();
+
+    const resizeObserver = new ResizeObserver(() => {
+      if (!container.isConnected || container.clientWidth === 0) return;
+      chart.applyOptions({ width: container.clientWidth });
+    });
+    resizeObserver.observe(container);
+
+    return () => {
+      resizeObserver.disconnect();
+      markerSeries.detach();
+      chart.remove();
+    };
+  }, [candleData, selectedInterval]);
 
   const fetchPCRData = async () => {
     setLoading(true);
@@ -187,7 +627,12 @@ function PCRAnalysis({ apiKey }) {
     return 'Bearish';
   };
 
-  const formatDate = (value) => value.toISOString().split('T')[0];
+  const formatDateTime = (value, time) => {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day} ${time}`;
+  };
 
   if (loading) {
     return <div className="card"><div className="loading">Loading PCR data...</div></div>;
@@ -199,10 +644,28 @@ function PCRAnalysis({ apiKey }) {
 
   const pcrVolume = pcrData?.pcr_volume || 0;
   const pcrOI = pcrData?.pcr_oi || 0;
+  const evaluatedSignals = signalRows.filter(signal => signal.outcome === 'True' || signal.outcome === 'False');
+  const successfulSignals = evaluatedSignals.filter(signal => signal.outcome === 'True');
+  const overallSuccess = evaluatedSignals.length > 0
+    ? (successfulSignals.length / evaluatedSignals.length) * 100
+    : 0;
+  const strategyReview = getStrategyReview(signalRows);
+  const lotSize = Number(selectedStrike?.lotSize) || 1;
+  const realizedInvestment = evaluatedSignals.reduce((total, signal) => total + (signal.entry * lotSize), 0);
+  const realizedProfitLoss = evaluatedSignals.reduce((total, signal) => {
+    const priceMove = signal.outcome === 'True'
+      ? Math.abs(signal.target - signal.entry)
+      : -Math.abs(signal.stopLoss - signal.entry);
+    return total + (priceMove * lotSize);
+  }, 0);
+  const pendingInvestment = signalRows
+    .filter(signal => signal.outcome === 'Pending')
+    .reduce((total, signal) => total + (signal.entry * lotSize), 0);
 
   return (
     <div className="pcr-container">
-      <div className="card">
+      <div className="pcr-layout">
+        <section className="pcr-analysis-box">
         <div className="pcr-header">
           <h2>📈 Nifty 50 Put-Call Ratio Analysis</h2>
           <button onClick={fetchPCRData} className="refresh-btn">🔄 Refresh</button>
@@ -227,11 +690,27 @@ function PCRAnalysis({ apiKey }) {
 
         <div className="pcr-metrics">
           <div className="metric">
+            <div className="metric-label">CE Call Volume</div>
+            <div className="metric-value" style={{ color: '#2563eb' }}>
+              {Number(pcrData?.call_volume || 0).toLocaleString()}
+            </div>
+            <div className="metric-sentiment">Selected strike</div>
+          </div>
+
+          <div className="metric">
+            <div className="metric-label">PE Put Volume</div>
+            <div className="metric-value" style={{ color: '#dc2626' }}>
+              {Number(pcrData?.put_volume || 0).toLocaleString()}
+            </div>
+            <div className="metric-sentiment">Selected strike</div>
+          </div>
+
+          <div className="metric">
             <div className="metric-label">PCR - Volume</div>
             <div className="metric-value" style={{ color: getSentimentColor(pcrVolume) }}>
               {pcrVolume.toFixed(3)}
             </div>
-            <div className="metric-sentiment">{getSentimentLabel(pcrVolume)}</div>
+            <div className="metric-sentiment">PE volume / CE volume</div>
           </div>
 
           <div className="metric">
@@ -239,9 +718,10 @@ function PCRAnalysis({ apiKey }) {
             <div className="metric-value" style={{ color: getSentimentColor(pcrOI) }}>
               {pcrOI.toFixed(3)}
             </div>
-            <div className="metric-sentiment">{getSentimentLabel(pcrOI)}</div>
+            <div className="metric-sentiment">PE OI / CE OI</div>
           </div>
         </div>
+        </section>
 
         <div className="chart-panel">
           <div className="chart-header">
@@ -260,7 +740,7 @@ function PCRAnalysis({ apiKey }) {
               >
                 {strikeOptions.length === 0 ? <option value="">Loading strikes...</option> : strikeOptions.map((option) => (
                   <option key={option.instrumentToken} value={option.instrumentToken}>
-                    {option.strike}
+                    {option.label}
                   </option>
                 ))}
               </select>
@@ -289,44 +769,130 @@ function PCRAnalysis({ apiKey }) {
             </div>
           )}
 
+          <div className={`trade-signal ${tradeSignal.action.toLowerCase()}`}>
+            <div className="trade-signal-action">{tradeSignal.action}</div>
+            <div>
+              <strong>{tradeSignal.pattern}</strong>
+              <span>{tradeSignal.reason}</span>
+            </div>
+          </div>
+
           {chartLoading ? (
             <div className="chart-loading">Loading chart...</div>
-          ) : chartData ? (
-            <div className="chart-wrapper">
-              <Line
-                data={chartData}
-                options={{
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  plugins: {
-                    legend: {
-                      display: true,
-                    },
-                    tooltip: {
-                      mode: 'index',
-                      intersect: false,
-                    },
-                  },
-                  scales: {
-                    x: {
-                      display: true,
-                      ticks: {
-                        maxTicksLimit: 8,
+          ) : candleData.length > 0 ? (
+            <div className="chart-stack">
+              <section className="chart-block">
+                <h4>OHLC Candlesticks <span className="chart-legend"><i className="legend-candle" /> Candle <i className="legend-ema20" /> EMA20 <i className="legend-ema50" /> EMA50</span></h4>
+                <div ref={candleChartRef} className="chart-wrapper" />
+              </section>
+
+              <section className="chart-block indicator-block">
+                <h4>RSI (14) <span className="indicator-range">Overbought 70&nbsp;&nbsp; Oversold 30</span></h4>
+                <div className="chart-wrapper indicator-wrapper">
+                  <Line
+                    data={rsiChartData}
+                    options={{
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
+                      scales: {
+                        x: { type: 'time', time: { unit: selectedInterval === 'day' ? 'day' : 'hour' }, ticks: { maxTicksLimit: 8, color: '#94a3b8' }, grid: { color: '#243244' } },
+                        y: { min: 0, max: 100, ticks: { color: '#94a3b8', callback: value => value }, grid: { color: '#243244' } },
                       },
-                    },
-                    y: {
-                      display: true,
-                      ticks: {
-                        callback: (value) => `₹${value}`,
+                    }}
+                  />
+                </div>
+              </section>
+
+              <section className="chart-block">
+                <h4>Closing Price Trend</h4>
+                <div className="chart-wrapper">
+                  <Line
+                    data={closeChartData}
+                    options={{
+                      responsive: true,
+                      maintainAspectRatio: false,
+                      plugins: {
+                        legend: { display: true },
+                        tooltip: { mode: 'index', intersect: false },
                       },
-                    },
-                  },
-                }}
-              />
+                      scales: {
+                        x: {
+                          type: 'time',
+                          time: { unit: selectedInterval === 'day' ? 'day' : 'hour' },
+                          ticks: { maxTicksLimit: 8 },
+                        },
+                        y: {
+                          display: true,
+                          ticks: { callback: (value) => `₹${value}` },
+                        },
+                      },
+                    }}
+                  />
+                </div>
+              </section>
             </div>
           ) : (
             <div className="chart-empty">Select a strike and timeframe to view historical candles.</div>
           )}
+
+          <section className="signal-table-panel">
+            <div className="signal-table-header">
+              <h3>Combined Signals</h3>
+              <div className="signal-summary">
+                <span>{signalRows.length} decisions | Overall success: {overallSuccess.toFixed(1)}%</span>
+                <span>Completed investment: ₹{realizedInvestment.toFixed(2)} | Gross P/L: <b className={realizedProfitLoss >= 0 ? 'profit' : 'loss'}>{realizedProfitLoss >= 0 ? '+' : ''}₹{realizedProfitLoss.toFixed(2)}</b></span>
+                <span>Pending investment: ₹{pendingInvestment.toFixed(2)} | Lot size: {lotSize}</span>
+              </div>
+            </div>
+            {strategyReview.length > 0 && (
+              <div className="strategy-review">
+                <strong>Failed signal review</strong>
+                {strategyReview.map(item => <span key={item}>{item}</span>)}
+              </div>
+            )}
+            {signalRows.length === 0 ? (
+              <div className="signal-table-empty">No combined BUY/SELL confirmation in this range.</div>
+            ) : (
+              <div className="signal-table-scroll">
+                <table className="signal-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Action</th>
+                      <th>Candlestick</th>
+                      <th>Chart pattern</th>
+                      <th>Entry</th>
+                      <th>Target</th>
+                      <th>Stop loss</th>
+                      <th>Success</th>
+                      <th>Evaluation</th>
+                      <th>Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {signalRows.map((signal, index) => {
+                      const parts = signal.pattern.split(' | Chart: ');
+                      return (
+                        <tr key={`${signal.time}-${index}`}>
+                          <td>{new Date(signal.time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
+                          <td><span className={`signal-pill ${signal.action.toLowerCase()}`}>{signal.action}</span></td>
+                          <td>{parts[0].replace('Candle: ', '')}</td>
+                          <td>{parts[1] || 'Confirmed structure'}</td>
+                          <td>₹{Number(signal.entry).toFixed(2)}</td>
+                          <td>₹{Number(signal.target).toFixed(2)}</td>
+                          <td>₹{Number(signal.stopLoss).toFixed(2)}</td>
+                          <td><span className={`outcome-pill ${signal.outcome.toLowerCase()}`}>{signal.outcome}</span></td>
+                          <td>{signal.evaluation}</td>
+                          <td>{signal.reason}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
         </div>
 
         <div className="pcr-details">

@@ -1,5 +1,20 @@
 .pcr-container {
   width: 100%;
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.pcr-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+}
+
+.pcr-analysis-box {
+  padding: 20px;
+  background: #fff;
+  border: 1px solid #e1e6ef;
+  border-radius: 8px;
 }
 
 .chart-panel {
@@ -8,6 +23,8 @@
   padding: 20px;
   margin-bottom: 25px;
   border: 1px solid #e7eaf3;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .chart-header h3 {
@@ -36,6 +53,7 @@
   border-radius: 8px;
   border: 1px solid #dfe4ea;
   background: white;
+  color: #333;
   font-size: 0.95rem;
 }
 
@@ -43,6 +61,217 @@
   position: relative;
   height: 360px;
 }
+
+.chart-stack {
+  display: grid;
+  gap: 24px;
+}
+
+.chart-block {
+  background: #fff;
+  border: 1px solid #e1e6ef;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.chart-block h4 {
+  margin: 0 0 10px;
+  color: #334155;
+}
+
+.chart-legend,
+.indicator-range {
+  float: right;
+  color: #94a3b8;
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.chart-legend i {
+  display: inline-block;
+  width: 9px;
+  height: 3px;
+  margin: 0 4px 2px 10px;
+  border-radius: 2px;
+}
+
+.legend-candle { background: #22c55e; }
+.legend-ema20 { background: #fbbf24; }
+.legend-ema50 { background: #38bdf8; }
+
+.indicator-wrapper {
+  height: 170px;
+}
+
+.trade-signal {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 20px;
+  padding: 14px 16px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.trade-signal-action {
+  min-width: 76px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  color: white;
+  font-size: 1.1rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.trade-signal.buy .trade-signal-action {
+  background: #15803d;
+}
+
+.trade-signal.sell .trade-signal-action {
+  background: #dc2626;
+}
+
+.trade-signal.hold .trade-signal-action {
+  background: #64748b;
+}
+
+.trade-signal strong,
+.trade-signal span {
+  display: block;
+}
+
+.trade-signal strong {
+  color: #1e293b;
+}
+
+.trade-signal span {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.signal-table-panel {
+  margin-top: 24px;
+  padding: 16px;
+  background: #fff;
+  border: 1px solid #e1e6ef;
+  border-radius: 8px;
+}
+
+.signal-table-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.signal-table-header h3 {
+  margin: 0;
+  color: #334155;
+}
+
+.signal-table-header span,
+.signal-table-empty {
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.signal-summary {
+  display: grid;
+  gap: 3px;
+  text-align: right;
+}
+
+.signal-summary .profit {
+  color: #15803d;
+}
+
+.signal-summary .loss {
+  color: #b91c1c;
+}
+
+.strategy-review {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 14px;
+  padding: 12px;
+  border-left: 3px solid #dc2626;
+  background: #fff7ed;
+  color: #7c2d12;
+  font-size: 0.86rem;
+}
+
+.strategy-review strong {
+  color: #9a3412;
+}
+
+@media (max-width: 720px) {
+  .signal-table-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .signal-summary {
+    text-align: left;
+  }
+}
+
+.signal-table-scroll {
+  overflow-x: auto;
+}
+
+.signal-table {
+  width: 100%;
+  min-width: 800px;
+  border-collapse: collapse;
+  color: #334155;
+  font-size: 0.86rem;
+}
+
+.signal-table th,
+.signal-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: left;
+  vertical-align: top;
+}
+
+.signal-table th {
+  background: #f8fafc;
+  color: #64748b;
+  font-weight: 700;
+}
+
+.signal-pill {
+  display: inline-block;
+  min-width: 48px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.signal-pill.buy { background: #15803d; }
+.signal-pill.sell { background: #dc2626; }
+
+.outcome-pill {
+  display: inline-block;
+  min-width: 54px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.outcome-pill.true { background: #dcfce7; color: #166534; }
+.outcome-pill.false { background: #fee2e2; color: #991b1b; }
+.outcome-pill.pending { background: #fef3c7; color: #92400e; }
+.outcome-pill.expired { background: #e2e8f0; color: #475569; }
+.outcome-pill.ambiguous { background: #f3e8ff; color: #6b21a8; }
 
 .chart-empty,
 .chart-loading {
