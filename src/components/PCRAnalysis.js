@@ -322,7 +322,12 @@ function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = []) {
   const window = candles.slice(-40);
   const candlestickPatterns = detectCandlestickPatterns(window, window.length - 1);
   const chartPatterns = classifyChartPatterns(findChartPatterns(window));
-  const fiveMinuteChartPatterns = classifyChartPatterns(findChartPatterns(fiveMinuteCandles.slice(-40)));
+  const fiveMinuteWindow = fiveMinuteCandles.slice(-40);
+  const fiveMinuteChartPatterns = classifyChartPatterns(findChartPatterns(fiveMinuteWindow));
+  const fiveMinutePivotHighs = fiveMinuteWindow.filter((candle, index) => index > 0 && index < fiveMinuteWindow.length - 1
+    && candle.h >= fiveMinuteWindow[index - 1].h && candle.h >= fiveMinuteWindow[index + 1].h);
+  const fiveMinutePivotLows = fiveMinuteWindow.filter((candle, index) => index > 0 && index < fiveMinuteWindow.length - 1
+    && candle.l <= fiveMinuteWindow[index - 1].l && candle.l <= fiveMinuteWindow[index + 1].l);
   const ema10Series = calculateEma(candles, 10);
   const ema20Series = calculateEma(candles, 20);
   const ema10 = ema10Series.at(-1)?.value || 0;
@@ -353,21 +358,33 @@ function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = []) {
     emaStatus,
   };
 
-  if (!['BUY', 'SELL'].includes(institutionalSignal.action)) {
-    const bullishContinuation = lastCandle.c > lastCandle.o && lastClose > microResistance * 1.0002 && ema10 > ema20 && lastClose > ema10;
-    const bearishContinuation = lastCandle.c < lastCandle.o && lastClose < microSupport * 0.9998 && ema10 < ema20 && lastClose < ema10;
-    if (bullishContinuation || bearishContinuation) {
-      const action = bullishContinuation ? 'BUY' : 'SELL';
-      institutionalSignal = {
-        action,
-        pattern: `One-minute momentum continuation | ${bullishContinuation ? 'Resistance' : 'Support'} ${(bullishContinuation ? microResistance : microSupport).toFixed(2)}`,
-        reason: 'Price broke the recent one-minute structure with momentum and EMA 10/20 trend alignment.',
-      };
-    }
+  const fiveMinuteBullish = fiveMinuteChartPatterns.bullish.length > 0;
+  const fiveMinuteBearish = fiveMinuteChartPatterns.bearish.length > 0;
+  if (fiveMinuteBullish === fiveMinuteBearish) {
+    return {
+      action: 'HOLD',
+      pattern: 'Five-minute premium direction unclear',
+      reason: 'A one-minute entry requires exactly one clear five-minute premium chart direction; mixed or missing five-minute structures are ignored.',
+      minuteConfirmation,
+    };
+  }
+
+  const fiveMinuteAction = fiveMinuteBullish ? 'BUY' : 'SELL';
+  if (['BUY', 'SELL'].includes(institutionalSignal.action) && institutionalSignal.action !== fiveMinuteAction) {
+    return {
+      action: 'HOLD',
+      pattern: 'Five-minute premium direction conflicts with setup',
+      reason: `The five-minute premium chart is ${fiveMinuteAction}, but the one-minute institutional setup is ${institutionalSignal.action}.`,
+      minuteConfirmation,
+    };
   }
 
   if (!['BUY', 'SELL'].includes(institutionalSignal.action)) {
-    return { ...institutionalSignal, minuteConfirmation };
+    institutionalSignal = {
+      action: fiveMinuteAction,
+      pattern: `Five-minute premium ${fiveMinuteAction === 'BUY' ? 'bullish' : 'bearish'} structure`,
+      reason: 'A clear five-minute premium chart pattern established direction; the one-minute chart is used for entry timing.',
+    };
   }
 
   const isBuy = institutionalSignal.action === 'BUY';
@@ -395,8 +412,10 @@ function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = []) {
   return {
     ...institutionalSignal,
     pattern: `${institutionalSignal.pattern} | Candle ${alignedCandlestick.join(', ') || 'none'} | 1m Chart ${alignedOneMinuteChart.join(', ') || 'none'} | 5m Chart filter clear | EMA10 ${ema10.toFixed(2)} ${isBuy ? '>' : '<'} EMA20 ${ema20.toFixed(2)}`,
-    reason: `${institutionalSignal.reason} One-minute candlestick or chart structure confirms with EMA 10/20 alignment; the five-minute chart has no conflicting structure.`,
+    reason: `${institutionalSignal.reason} One-minute candlestick or chart structure confirms the five-minute premium chart direction with EMA 10/20 alignment.`,
     minuteConfirmation,
+    premiumSupport: fiveMinutePivotLows.filter(pivot => pivot.l < lastClose).at(-1)?.l,
+    premiumResistance: fiveMinutePivotHighs.find(pivot => pivot.h > lastClose)?.h,
   };
 }
 
@@ -437,22 +456,23 @@ function calculateTradeLevels(candles, signal, oneMinuteMode = false) {
     && candle.h >= structure[index - 1].h && candle.h >= structure[index + 1].h);
   const pivotLows = structure.filter((candle, index) => index > 0 && index < structure.length - 1
     && candle.l <= structure[index - 1].l && candle.l <= structure[index + 1].l);
-  const patternRange = Math.max(...structure.map(candle => candle.h)) - Math.min(...structure.map(candle => candle.l));
   const buffer = Math.max(averageRange * 0.35, 0.5);
 
   if (signal.action === 'BUY') {
-    const patternSupport = pivotLows.at(-1)?.l ?? recentLow;
+    const patternSupport = signal.premiumSupport ?? pivotLows.at(-1)?.l ?? recentLow;
     const stopLoss = patternSupport - buffer;
     const risk = entry - stopLoss;
-    const target = entry + Math.max(patternRange, risk * 2);
-    return { entry, target, stopLoss, levelSource: '1m pattern support and measured move' };
+    const premiumTarget = signal.premiumResistance ?? pivotHighs.find(pivot => pivot.h > entry)?.h ?? recentHigh;
+    const target = premiumTarget > entry ? premiumTarget : entry + risk * 1.5;
+    return { entry, target, stopLoss, levelSource: signal.premiumSupport ? '5m premium support/resistance with 1m entry' : '1m pattern support and measured move' };
   }
 
-  const patternResistance = pivotHighs.at(-1)?.h ?? recentHigh;
+  const patternResistance = signal.premiumResistance ?? pivotHighs.at(-1)?.h ?? recentHigh;
   const stopLoss = patternResistance + buffer;
   const risk = stopLoss - entry;
-  const target = entry - Math.max(patternRange, risk * 2);
-  return { entry, target, stopLoss, levelSource: '1m pattern resistance and measured move' };
+  const premiumTarget = signal.premiumSupport ?? [...pivotLows].reverse().find(pivot => pivot.l < entry)?.l ?? recentLow;
+  const target = Math.max(0.05, premiumTarget < entry ? premiumTarget : entry - risk * 1.5);
+  return { entry, target, stopLoss, levelSource: signal.premiumResistance ? '5m premium support/resistance with 1m entry' : '1m pattern resistance and measured move' };
 }
 
 function calculateCurrentTradePlan(candles, signal) {
