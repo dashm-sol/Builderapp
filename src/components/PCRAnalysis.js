@@ -398,19 +398,47 @@ function calculateTradeSignal(candles, oneMinuteMode = false, fiveMinuteCandles 
   return signal;
 }
 
-function calculateCurrentTradePlan(candles, signal) {
-  if (!signal || !['BUY', 'SELL'].includes(signal.action) || candles.length === 0) return null;
+function calculateTradeLevels(candles, signal, oneMinuteMode = false) {
   const signalCandle = candles.at(-1);
   const recent = candles.slice(-20);
   const entry = signalCandle.c;
   const recentLow = Math.min(...recent.map(candle => candle.l));
   const recentHigh = Math.max(...recent.map(candle => candle.h));
   const averageRange = recent.reduce((sum, candle) => sum + (candle.h - candle.l), 0) / recent.length;
-  const risk = Math.max(averageRange * 1.2, 0.5);
+  const fallbackRisk = Math.max(averageRange * 1.2, 0.5);
 
-  return signal.action === 'BUY'
-    ? { ...signal, time: signalCandle.x, entry, target: Math.max(recentHigh, entry + risk * 2), stopLoss: recentLow - risk }
-    : { ...signal, time: signalCandle.x, entry, target: Math.min(recentLow, entry - risk * 2), stopLoss: recentHigh + risk };
+  if (!oneMinuteMode || !signal.minuteConfirmation) {
+    return signal.action === 'BUY'
+      ? { entry, target: Math.max(recentHigh, entry + fallbackRisk * 2), stopLoss: recentLow - fallbackRisk }
+      : { entry, target: Math.min(recentLow, entry - fallbackRisk * 2), stopLoss: recentHigh + fallbackRisk };
+  }
+
+  const structure = candles.slice(-40);
+  const pivotHighs = structure.filter((candle, index) => index > 0 && index < structure.length - 1
+    && candle.h >= structure[index - 1].h && candle.h >= structure[index + 1].h);
+  const pivotLows = structure.filter((candle, index) => index > 0 && index < structure.length - 1
+    && candle.l <= structure[index - 1].l && candle.l <= structure[index + 1].l);
+  const patternRange = Math.max(...structure.map(candle => candle.h)) - Math.min(...structure.map(candle => candle.l));
+  const buffer = Math.max(averageRange * 0.35, 0.5);
+
+  if (signal.action === 'BUY') {
+    const patternSupport = pivotLows.at(-1)?.l ?? recentLow;
+    const stopLoss = patternSupport - buffer;
+    const risk = entry - stopLoss;
+    const target = entry + Math.max(patternRange, risk * 2);
+    return { entry, target, stopLoss, levelSource: '1m pattern support and measured move' };
+  }
+
+  const patternResistance = pivotHighs.at(-1)?.h ?? recentHigh;
+  const stopLoss = patternResistance + buffer;
+  const risk = stopLoss - entry;
+  const target = entry - Math.max(patternRange, risk * 2);
+  return { entry, target, stopLoss, levelSource: '1m pattern resistance and measured move' };
+}
+
+function calculateCurrentTradePlan(candles, signal) {
+  if (!signal || !['BUY', 'SELL'].includes(signal.action) || candles.length === 0) return null;
+  return { ...signal, time: candles.at(-1).x, ...calculateTradeLevels(candles, signal, Boolean(signal.minuteConfirmation)) };
 }
 
 function evaluateSignalWithFutureCandles(signal, future, target, stopLoss) {
@@ -501,17 +529,10 @@ function buildSignalRows(candles, oneMinuteMode = false, fiveMinuteCandles = [])
       if (signal.action === 'HOLD') return null;
 
       const signalCandle = candles[index];
-      const entry = signalCandle.c;
-      const recent = candles.slice(Math.max(0, index - 20), index + 1);
-      const recentLow = Math.min(...recent.map(candle => candle.l));
-      const recentHigh = Math.max(...recent.map(candle => candle.h));
-      const averageRange = recent.reduce((sum, candle) => sum + (candle.h - candle.l), 0) / Math.max(recent.length, 1);
-      const risk = Math.max(averageRange * 1.2, 0.5);
+      const levels = calculateTradeLevels(window, signal, oneMinuteMode);
+      const { entry, target, stopLoss } = levels;
 
       if (signal.action === 'BUY') {
-        const blockLow = Math.min(...recent.map(candle => candle.l));
-        const stopLoss = blockLow - risk;
-        const target = Math.max(recentHigh, entry + risk * 2);
         const future = candles.slice(index + 1);
         const result = evaluateSignalWithFutureCandles(signal, future, target, stopLoss);
         activeTradeUntil = result.closedAt || Number.MAX_SAFE_INTEGER;
@@ -521,13 +542,11 @@ function buildSignalRows(candles, oneMinuteMode = false, fiveMinuteCandles = [])
           entry,
           target,
           stopLoss,
+          levelSource: levels.levelSource,
           ...result,
         };
       }
 
-      const blockHigh = Math.max(...recent.map(candle => candle.h));
-      const stopLoss = blockHigh + risk;
-      const target = Math.min(recentLow, entry - risk * 2);
       const future = candles.slice(index + 1);
       const result = evaluateSignalWithFutureCandles(signal, future, target, stopLoss);
       activeTradeUntil = result.closedAt || Number.MAX_SAFE_INTEGER;
@@ -537,6 +556,7 @@ function buildSignalRows(candles, oneMinuteMode = false, fiveMinuteCandles = [])
         entry,
         target,
         stopLoss,
+        levelSource: levels.levelSource,
         ...result,
       };
     })
@@ -1243,8 +1263,8 @@ function PCRAnalysis({ apiKey }) {
                           {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.fiveMinuteChart || 'No 5m chart structure confirmation'}</td>}
                           {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.emaStatus || 'EMA confirmation unavailable'}<small>{signal.minuteConfirmation?.ema || ''}</small></td>}
                           <td>₹{Number(signal.entry).toFixed(2)}</td>
-                          <td>₹{Number(signal.target).toFixed(2)}</td>
-                          <td>₹{Number(signal.stopLoss).toFixed(2)}</td>
+                          <td>₹{Number(signal.target).toFixed(2)}{signal.levelSource && <small>{signal.levelSource}</small>}</td>
+                          <td>₹{Number(signal.stopLoss).toFixed(2)}{signal.levelSource && <small>{signal.levelSource}</small>}</td>
                           <td><span className={`outcome-pill ${signal.outcome.toLowerCase()}`}>{signal.outcome}</span></td>
                           <td>{signal.evaluation}</td>
                           <td>{signal.reason}</td>
