@@ -369,6 +369,13 @@ function PCRAnalysis({ apiKey }) {
     if (!selectedStrike || !selectedInterval) return;
     fetchHistoricalChart(selectedStrike, selectedInterval);
     fetchRealPCR(selectedStrike);
+
+    const refreshInterval = setInterval(() => {
+      fetchHistoricalChart(selectedStrike, selectedInterval);
+      fetchRealPCR(selectedStrike);
+    }, 50000);
+
+    return () => clearInterval(refreshInterval);
   }, [selectedStrike, selectedInterval]);
 
   const fetchRealPCR = async (strike) => {
@@ -438,7 +445,6 @@ function PCRAnalysis({ apiKey }) {
       const expiryDate = strike.expiry ? new Date(`${strike.expiry}T23:59:59`) : null;
       const hasExpired = expiryDate && !Number.isNaN(expiryDate.getTime()) && expiryDate < new Date();
       const to = hasExpired ? expiryDate : new Date();
-      if (!hasExpired) to.setDate(to.getDate() - 1);
       const from = new Date(to);
       from.setDate(from.getDate() - 30);
       const candles = await kiteAPI.getHistoricalData({
