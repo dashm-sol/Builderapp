@@ -311,11 +311,11 @@ function calculateInstitutionalTradeSignal(candles) {
 }
 
 function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = []) {
-  const institutionalSignal = calculateInstitutionalTradeSignal(candles);
-  if (candles.length < 40 || fiveMinuteCandles.length < 40) {
+  let institutionalSignal = calculateInstitutionalTradeSignal(candles);
+  if (candles.length < 40 || fiveMinuteCandles.length < 20) {
     return {
       ...institutionalSignal,
-      minuteConfirmation: { status: 'Need at least 40 one-minute and 40 five-minute candles for multi-timeframe chart confirmation.' },
+      minuteConfirmation: { status: 'Need at least 40 one-minute and 20 five-minute candles for multi-timeframe confirmation.' },
     };
   }
 
@@ -330,6 +330,10 @@ function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = []) {
   const previousEma10 = ema10Series.at(-2)?.value || 0;
   const previousEma20 = ema20Series.at(-2)?.value || 0;
   const lastClose = window.at(-1).c;
+  const lastCandle = window.at(-1);
+  const microStructure = window.slice(-16, -1);
+  const microResistance = Math.max(...microStructure.map(candle => candle.h));
+  const microSupport = Math.min(...microStructure.map(candle => candle.l));
   const crossedUp = previousEma10 <= previousEma20 && ema10 > ema20;
   const crossedDown = previousEma10 >= previousEma20 && ema10 < ema20;
   const emaStatus = crossedUp
@@ -350,6 +354,19 @@ function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = []) {
   };
 
   if (!['BUY', 'SELL'].includes(institutionalSignal.action)) {
+    const bullishContinuation = lastCandle.c > lastCandle.o && lastClose > microResistance * 1.0002 && ema10 > ema20 && lastClose > ema10;
+    const bearishContinuation = lastCandle.c < lastCandle.o && lastClose < microSupport * 0.9998 && ema10 < ema20 && lastClose < ema10;
+    if (bullishContinuation || bearishContinuation) {
+      const action = bullishContinuation ? 'BUY' : 'SELL';
+      institutionalSignal = {
+        action,
+        pattern: `One-minute momentum continuation | ${bullishContinuation ? 'Resistance' : 'Support'} ${(bullishContinuation ? microResistance : microSupport).toFixed(2)}`,
+        reason: 'Price broke the recent one-minute structure with momentum and EMA 10/20 trend alignment.',
+      };
+    }
+  }
+
+  if (!['BUY', 'SELL'].includes(institutionalSignal.action)) {
     return { ...institutionalSignal, minuteConfirmation };
   }
 
@@ -363,20 +380,22 @@ function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = []) {
     ? ema10 > ema20 && lastClose > ema10
     : ema10 < ema20 && lastClose < ema10;
 
-  if (alignedCandlestick.length === 0 || alignedOneMinuteChart.length === 0 || alignedFiveMinuteChart.length === 0
-    || conflictingOneMinuteChart.length > 0 || conflictingFiveMinuteChart.length > 0 || !emaAligned) {
+  const hasOneMinuteConfirmation = alignedCandlestick.length > 0 || alignedOneMinuteChart.length > 0;
+  const unresolvedOneMinuteConflict = conflictingOneMinuteChart.length > 0 && alignedOneMinuteChart.length === 0;
+  const unresolvedFiveMinuteConflict = conflictingFiveMinuteChart.length > 0 && alignedFiveMinuteChart.length === 0;
+  if (!hasOneMinuteConfirmation || unresolvedOneMinuteConflict || unresolvedFiveMinuteConflict || !emaAligned) {
     return {
       action: 'HOLD',
       pattern: 'One-minute confirmation incomplete',
-      reason: 'Requires liquidity sweep/order-block with support-resistance, aligned one-minute and five-minute chart patterns, no opposite chart structure, an aligned candlestick pattern, and EMA 10/20 alignment.',
+      reason: 'Requires an institutional or momentum continuation setup, an aligned one-minute candlestick or chart pattern, no unresolved opposite one-minute or five-minute structure, and EMA 10/20 alignment.',
       minuteConfirmation,
     };
   }
 
   return {
     ...institutionalSignal,
-    pattern: `${institutionalSignal.pattern} | Candle ${alignedCandlestick.join(', ')} | 1m Chart ${alignedOneMinuteChart.join(', ')} | 5m Chart ${alignedFiveMinuteChart.join(', ')} | EMA10 ${ema10.toFixed(2)} ${isBuy ? '>' : '<'} EMA20 ${ema20.toFixed(2)}`,
-    reason: `${institutionalSignal.reason} One-minute candlestick, one-minute chart structure, five-minute chart structure, and EMA 10/20 all align.`,
+    pattern: `${institutionalSignal.pattern} | Candle ${alignedCandlestick.join(', ') || 'none'} | 1m Chart ${alignedOneMinuteChart.join(', ') || 'none'} | 5m Chart filter clear | EMA10 ${ema10.toFixed(2)} ${isBuy ? '>' : '<'} EMA20 ${ema20.toFixed(2)}`,
+    reason: `${institutionalSignal.reason} One-minute candlestick or chart structure confirms with EMA 10/20 alignment; the five-minute chart has no conflicting structure.`,
     minuteConfirmation,
   };
 }
@@ -989,6 +1008,24 @@ function PCRAnalysis({ apiKey }) {
     .filter(signal => signal.outcome === 'Pending')
     .reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
 
+  const downloadSignalsJson = () => {
+    const exportData = {
+      exportedAt: new Date().toISOString(),
+      strike: selectedStrike?.label || null,
+      timeframe: selectedInterval,
+      filter: signalFilter,
+      lotSize,
+      signals: filteredSignalRows,
+    };
+    const file = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const downloadUrl = URL.createObjectURL(file);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = `signals-${selectedInterval}-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(downloadUrl);
+  };
+
   return (
     <div className="pcr-container">
       <div className="pcr-layout">
@@ -1209,6 +1246,7 @@ function PCRAnalysis({ apiKey }) {
                     <option value="SELL">Sell only</option>
                   </select>
                 </label>
+                <button type="button" className="download-signals-btn" onClick={downloadSignalsJson} disabled={filteredSignalRows.length === 0}>Download JSON</button>
               </div>
               <div className="signal-summary">
                 <span>{filteredSignalRows.length} decisions | Overall success: {overallSuccess.toFixed(1)}%</span>
