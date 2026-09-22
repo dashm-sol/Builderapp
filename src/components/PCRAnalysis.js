@@ -307,6 +307,21 @@ function calculateTradeSignal(candles) {
   return calculateInstitutionalTradeSignal(candles);
 }
 
+function calculateCurrentTradePlan(candles, signal) {
+  if (!signal || !['BUY', 'SELL'].includes(signal.action) || candles.length === 0) return null;
+  const signalCandle = candles.at(-1);
+  const recent = candles.slice(-20);
+  const entry = signalCandle.c;
+  const recentLow = Math.min(...recent.map(candle => candle.l));
+  const recentHigh = Math.max(...recent.map(candle => candle.h));
+  const averageRange = recent.reduce((sum, candle) => sum + (candle.h - candle.l), 0) / recent.length;
+  const risk = Math.max(averageRange * 1.2, 0.5);
+
+  return signal.action === 'BUY'
+    ? { ...signal, time: signalCandle.x, entry, target: Math.max(recentHigh, entry + risk * 2), stopLoss: recentLow - risk }
+    : { ...signal, time: signalCandle.x, entry, target: Math.min(recentLow, entry - risk * 2), stopLoss: recentHigh + risk };
+}
+
 function evaluateSignalWithFutureCandles(signal, future, target, stopLoss) {
   if (future.length === 0) {
     return { outcome: 'Pending', evaluation: 'Waiting for the next candle high/low' };
@@ -439,6 +454,12 @@ function PCRAnalysis({ apiKey }) {
   const [closeChartData, setCloseChartData] = useState(null);
   const [rsiChartData, setRsiChartData] = useState(null);
   const [tradeSignal, setTradeSignal] = useState({ action: 'HOLD', pattern: 'Waiting for data', reason: '' });
+  const [autoTradePlan, setAutoTradePlan] = useState(null);
+  const [autoTradingEnabled, setAutoTradingEnabled] = useState(false);
+  const [autoTradingAcknowledged, setAutoTradingAcknowledged] = useState(false);
+  const [autoTradingStatus, setAutoTradingStatus] = useState('Automatic trading is off.');
+  const [autoTradingBusy, setAutoTradingBusy] = useState(false);
+  const [submittedAutoSignalKey, setSubmittedAutoSignalKey] = useState('');
   const [signalRows, setSignalRows] = useState([]);
   const [signalFilter, setSignalFilter] = useState('ALL');
   const candleChartRef = React.useRef(null);
@@ -576,9 +597,11 @@ function PCRAnalysis({ apiKey }) {
           : latest || null
       );
 
-      setCandleData(candleData);
-  setTradeSignal(calculateTradeSignal(decisionCandleData));
-  setSignalRows(buildSignalRows(decisionCandleData));
+        const currentSignal = calculateTradeSignal(decisionCandleData);
+        setCandleData(candleData);
+        setTradeSignal(currentSignal);
+        setAutoTradePlan(calculateCurrentTradePlan(decisionCandleData, currentSignal));
+        setSignalRows(buildSignalRows(decisionCandleData));
       setCloseChartData({
         datasets: [{
           label: `${strike.label} close • ${interval}`,
@@ -611,6 +634,69 @@ function PCRAnalysis({ apiKey }) {
       setChartLoading(false);
     }
   };
+
+  const startAutomaticTrading = async () => {
+    if (!autoTradingAcknowledged) {
+      setAutoTradingStatus('Confirm the live-order acknowledgement before starting.');
+      return;
+    }
+    setAutoTradingBusy(true);
+    try {
+      const kiteAPI = new KiteAPI();
+      await kiteAPI.startAutomaticTrading();
+      setSubmittedAutoSignalKey('');
+      setAutoTradingEnabled(true);
+      setAutoTradingStatus('Automatic trading is armed. It will place one order only for the next confirmed signal.');
+    } catch (err) {
+      setAutoTradingStatus(err.response?.data?.error || err.message || 'Unable to start automatic trading.');
+    } finally {
+      setAutoTradingBusy(false);
+    }
+  };
+
+  const stopAutomaticTrading = async () => {
+    setAutoTradingBusy(true);
+    try {
+      const kiteAPI = new KiteAPI();
+      await kiteAPI.stopAutomaticTrading();
+      setAutoTradingEnabled(false);
+      setAutoTradingStatus('Automatic trading stopped. Any active automatic position was closed.');
+    } catch (err) {
+      setAutoTradingStatus(err.response?.data?.error || err.message || 'Unable to stop automatic trading.');
+    } finally {
+      setAutoTradingBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!autoTradingEnabled || !autoTradePlan || !selectedStrike) return undefined;
+    const signalKey = `${selectedStrike.tradingsymbol}:${autoTradePlan.action}:${autoTradePlan.time}`;
+    if (submittedAutoSignalKey === signalKey) return undefined;
+
+    let cancelled = false;
+    const submitSignal = async () => {
+      setSubmittedAutoSignalKey(signalKey);
+      setAutoTradingStatus(`Submitting ${autoTradePlan.action} order with target and stop loss...`);
+      try {
+        const kiteAPI = new KiteAPI();
+        const order = await kiteAPI.submitAutomaticSignal({
+          action: autoTradePlan.action,
+          exchange: 'NFO',
+          tradingsymbol: selectedStrike.tradingsymbol,
+          quantity: Number(selectedStrike.lotSize) || 1,
+          entry: autoTradePlan.entry,
+          target: autoTradePlan.target,
+          stopLoss: autoTradePlan.stopLoss,
+          signalTime: autoTradePlan.time,
+        });
+        if (!cancelled) setAutoTradingStatus(`Entry submitted: ${order.entryOrderId}. Target and stop-loss exits will be armed after it fills.`);
+      } catch (err) {
+        if (!cancelled) setAutoTradingStatus(err.response?.data?.error || err.message || 'Automatic order was rejected.');
+      }
+    };
+    submitSignal();
+    return () => { cancelled = true; };
+  }, [autoTradePlan, autoTradingEnabled, selectedStrike, submittedAutoSignalKey]);
 
   useEffect(() => {
     const container = candleChartRef.current;
@@ -895,6 +981,31 @@ function PCRAnalysis({ apiKey }) {
               <span>{tradeSignal.reason}</span>
             </div>
           </div>
+
+          <section className={`auto-trading-panel ${autoTradingEnabled ? 'armed' : ''}`}>
+            <div>
+              <h4>Automatic Trading</h4>
+              <span>{autoTradingStatus}</span>
+            </div>
+            <label className="auto-trading-acknowledgement">
+              <input
+                type="checkbox"
+                checked={autoTradingAcknowledged}
+                onChange={(event) => setAutoTradingAcknowledged(event.target.checked)}
+                disabled={autoTradingEnabled || autoTradingBusy}
+              />
+              I understand this places live Kite orders for one lot with a target and stop loss.
+            </label>
+            {autoTradePlan && <div className="auto-trade-levels">Next signal: {autoTradePlan.action} | Entry ₹{autoTradePlan.entry.toFixed(2)} | Target ₹{autoTradePlan.target.toFixed(2)} | Stop ₹{autoTradePlan.stopLoss.toFixed(2)}</div>}
+            <button
+              type="button"
+              className={autoTradingEnabled ? 'auto-trading-stop' : 'auto-trading-start'}
+              onClick={autoTradingEnabled ? stopAutomaticTrading : startAutomaticTrading}
+              disabled={autoTradingBusy || (!autoTradingEnabled && !autoTradingAcknowledged)}
+            >
+              {autoTradingBusy ? 'Working...' : autoTradingEnabled ? 'Stop Automatic Trading' : 'Start Automatic Trading'}
+            </button>
+          </section>
 
           {chartLoading ? (
             <div className="chart-loading">Loading chart...</div>

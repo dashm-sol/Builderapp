@@ -151,6 +151,63 @@
   font-size: 0.9rem;
 }
 
+.auto-trading-panel {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 20px;
+  padding: 14px 16px;
+  border: 1px solid #d7dee8;
+  border-left: 4px solid #64748b;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.auto-trading-panel.armed {
+  border-left-color: #b45309;
+  background: #fffbeb;
+}
+
+.auto-trading-panel h4 {
+  margin: 0;
+  color: #1e293b;
+}
+
+.auto-trading-panel span,
+.auto-trade-levels {
+  color: #475569;
+  font-size: 0.88rem;
+}
+
+.auto-trading-acknowledgement {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #334155;
+  font-size: 0.88rem;
+}
+
+.auto-trading-acknowledgement input {
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+}
+
+.auto-trading-start,
+.auto-trading-stop {
+  justify-self: start;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.auto-trading-start { background: #b45309; }
+.auto-trading-stop { background: #b91c1c; }
+.auto-trading-start:disabled,
+.auto-trading-stop:disabled { cursor: not-allowed; opacity: 0.55; }
+
 .signal-table-panel {
   margin-top: 24px;
   padding: 16px;
