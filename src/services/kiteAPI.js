@@ -145,6 +145,26 @@ class KiteAPI {
     }
   }
 
+  async getAutomaticTradingStatus() {
+    const response = await this.client.get('/auto-trading/status');
+    return response.data;
+  }
+
+  async startAutomaticTrading() {
+    const response = await this.client.post('/auto-trading/start');
+    return response.data;
+  }
+
+  async stopAutomaticTrading() {
+    const response = await this.client.post('/auto-trading/stop');
+    return response.data;
+  }
+
+  async submitAutomaticSignal(signal) {
+    const response = await this.client.post('/auto-trading/signal', signal);
+    return response.data;
+  }
+
   // Get option chain data for PCR calculation
   async getOptionChain(instrumentKey) {
     try {

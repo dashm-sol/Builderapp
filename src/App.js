@@ -6,6 +6,7 @@ import ApiConfig from './components/ApiConfig';
 import GithubAuth from './components/GithubAuth';
 
 function App() {
+  const sessionDurationMs = 24 * 60 * 60 * 1000;
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userEmail, setUserEmail] = useState(null);
   const [isConfigured, setIsConfigured] = useState(false);
@@ -17,12 +18,11 @@ function App() {
     const authData = JSON.parse(sessionStorage.getItem('githubAuth') || 'null');
     if (authData) {
       const sessionTime = Date.now() - authData.timestamp;
-      const oneHourMs = 60 * 60 * 1000;
       
-      if (sessionTime < oneHourMs) {
+      if (sessionTime < sessionDurationMs) {
         setIsAuthenticated(true);
         setUserEmail(authData.email);
-        startSessionTimer(oneHourMs - sessionTime);
+        startSessionTimer(sessionDurationMs - sessionTime);
       } else {
         sessionStorage.removeItem('githubAuth');
       }
@@ -39,7 +39,7 @@ function App() {
   const handleAuthSuccess = (email) => {
     setIsAuthenticated(true);
     setUserEmail(email);
-    startSessionTimer(60 * 60 * 1000); // 1 hour
+    startSessionTimer(sessionDurationMs);
   };
 
   const handleConfigured = useCallback((configuredApiKey) => {

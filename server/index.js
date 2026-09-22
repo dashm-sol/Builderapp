@@ -21,6 +21,12 @@ const sessionStorePath = path.resolve(__dirname, '.sessions');
 const sessionDebugLogPath = path.resolve(__dirname, 'session-debug.log');
 const sessionDebugCountPath = path.resolve(__dirname, '.session-debug-count');
 const maxDebugLogRecords = 100;
+const liveTradingEnabled = process.env.ENABLE_LIVE_TRADING === 'true';
+const autoTradingState = {
+  enabled: false,
+  activeTrade: null,
+  lastSignalKey: null,
+};
 
 fs.mkdirSync(sessionStorePath, { recursive: true });
 
@@ -184,6 +190,157 @@ async function proxyKiteRequest(req, res, pathName, params = {}, options = {}) {
   }
 }
 
+function getKiteHeaders(sessionData) {
+  return {
+    'X-Kite-Version': '3',
+    Authorization: `token ${sessionData.kiteApiKey || kiteApiKey}:${sessionData.kiteAccessToken}`,
+  };
+}
+
+async function placeKiteOrder(sessionData, order) {
+  const body = new URLSearchParams(order);
+  const response = await axios.post(`${kiteBaseUrl}/orders/regular`, body.toString(), {
+    headers: {
+      ...getKiteHeaders(sessionData),
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+  });
+  return response.data?.data?.order_id;
+}
+
+async function cancelKiteOrder(sessionData, orderId) {
+  if (!orderId) return;
+  await axios.delete(`${kiteBaseUrl}/orders/regular/${encodeURIComponent(orderId)}`, {
+    headers: getKiteHeaders(sessionData),
+  });
+}
+
+async function getKiteOrderStatus(sessionData, orderId) {
+  const response = await axios.get(`${kiteBaseUrl}/orders/${encodeURIComponent(orderId)}`, {
+    headers: getKiteHeaders(sessionData),
+  });
+  const orders = response.data?.data || [];
+  return orders.at(-1)?.status || null;
+}
+
+async function armAutoExitOrders(activeTrade) {
+  const targetOrderId = await placeKiteOrder(activeTrade.sessionData, {
+    exchange: activeTrade.exchange,
+    tradingsymbol: activeTrade.tradingsymbol,
+    transaction_type: activeTrade.exitSide,
+    quantity: String(activeTrade.quantity),
+    product: activeTrade.product,
+    order_type: 'LIMIT',
+    price: activeTrade.target.toFixed(2),
+    validity: 'DAY',
+    tag: 'AUTOTARGET',
+  });
+
+  try {
+    const stopOrderId = await placeKiteOrder(activeTrade.sessionData, {
+      exchange: activeTrade.exchange,
+      tradingsymbol: activeTrade.tradingsymbol,
+      transaction_type: activeTrade.exitSide,
+      quantity: String(activeTrade.quantity),
+      product: activeTrade.product,
+      order_type: 'SL-M',
+      trigger_price: activeTrade.stopLoss.toFixed(2),
+      validity: 'DAY',
+      market_protection: '-1',
+      tag: 'AUTOSTOP',
+    });
+    activeTrade.targetOrderId = targetOrderId;
+    activeTrade.stopOrderId = stopOrderId;
+    activeTrade.entryComplete = true;
+    writeSessionDebugLog('auto-trade-exits-armed', { symbol: activeTrade.tradingsymbol, targetOrderId, stopOrderId });
+  } catch (error) {
+    await Promise.allSettled([cancelKiteOrder(activeTrade.sessionData, targetOrderId)]);
+    throw error;
+  }
+}
+
+async function closeActiveAutoTrade(reason) {
+  const activeTrade = autoTradingState.activeTrade;
+  if (!activeTrade) return;
+
+  try {
+    if (!activeTrade.entryComplete) {
+      await cancelKiteOrder(activeTrade.sessionData, activeTrade.entryOrderId);
+      writeSessionDebugLog('auto-trade-entry-cancelled', { reason, symbol: activeTrade.tradingsymbol });
+      return;
+    }
+    await Promise.allSettled([
+      cancelKiteOrder(activeTrade.sessionData, activeTrade.targetOrderId),
+      cancelKiteOrder(activeTrade.sessionData, activeTrade.stopOrderId),
+    ]);
+    await placeKiteOrder(activeTrade.sessionData, {
+      exchange: activeTrade.exchange,
+      tradingsymbol: activeTrade.tradingsymbol,
+      transaction_type: activeTrade.exitSide,
+      quantity: String(activeTrade.quantity),
+      product: activeTrade.product,
+      order_type: 'MARKET',
+      validity: 'DAY',
+      market_protection: '-1',
+      tag: 'AUTOEXIT',
+    });
+    writeSessionDebugLog('auto-trade-closed', { reason, symbol: activeTrade.tradingsymbol });
+  } catch (error) {
+    console.error('Failed to close auto trade:', error.response?.data || error.message);
+  } finally {
+    autoTradingState.activeTrade = null;
+  }
+}
+
+function isWithinTradingHours() {
+  const now = new Date();
+  const indiaTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const day = indiaTime.getDay();
+  const minutes = indiaTime.getHours() * 60 + indiaTime.getMinutes();
+  return day >= 1 && day <= 5 && minutes >= 9 * 60 + 15 && minutes < 15 * 60 + 20;
+}
+
+setInterval(async () => {
+  const activeTrade = autoTradingState.activeTrade;
+  if (!activeTrade) return;
+
+  try {
+    if (!isWithinTradingHours()) {
+      await closeActiveAutoTrade('intraday-cutoff');
+      return;
+    }
+    if (!activeTrade.entryComplete) {
+      const entryStatus = await getKiteOrderStatus(activeTrade.sessionData, activeTrade.entryOrderId);
+      if (entryStatus === 'COMPLETE') {
+        try {
+          await armAutoExitOrders(activeTrade);
+        } catch (error) {
+          console.error('Failed to arm automatic exits:', error.response?.data || error.message);
+          activeTrade.entryComplete = true;
+          await closeActiveAutoTrade('protective-exit-rejected');
+        }
+      } else if (['REJECTED', 'CANCELLED'].includes(entryStatus)) {
+        autoTradingState.activeTrade = null;
+        writeSessionDebugLog('auto-trade-entry-not-filled', { status: entryStatus, symbol: activeTrade.tradingsymbol });
+      }
+      return;
+    }
+    const [targetStatus, stopStatus] = await Promise.all([
+      getKiteOrderStatus(activeTrade.sessionData, activeTrade.targetOrderId),
+      getKiteOrderStatus(activeTrade.sessionData, activeTrade.stopOrderId),
+    ]);
+    if (targetStatus === 'COMPLETE' || stopStatus === 'COMPLETE') {
+      const filledOrderId = targetStatus === 'COMPLETE' ? activeTrade.targetOrderId : activeTrade.stopOrderId;
+      const openOrderId = targetStatus === 'COMPLETE' ? activeTrade.stopOrderId : activeTrade.targetOrderId;
+      await Promise.allSettled([cancelKiteOrder(activeTrade.sessionData, openOrderId)]);
+      autoTradingState.activeTrade = null;
+      writeSessionDebugLog('auto-trade-exit-filled', { filledOrderId, symbol: activeTrade.tradingsymbol });
+    }
+  } catch (error) {
+    console.error('Automatic trade monitor failed:', error.response?.data || error.message);
+  }
+}, 5000);
+
 async function exchangeRequestToken(apiKey, apiSecret, requestToken) {
   const checksum = crypto
     .createHash('sha256')
@@ -330,6 +487,106 @@ app.get('/api/kite/callback', async (req, res) => {
 
 app.post('/api/kite/logout', (req, res) => {
   req.session.destroy(() => res.status(204).end());
+});
+
+app.get('/api/kite/auto-trading/status', requireKiteSession, (req, res) => {
+  res.json({
+    liveTradingEnabled,
+    enabled: autoTradingState.enabled,
+    activeTrade: autoTradingState.activeTrade
+      ? { symbol: autoTradingState.activeTrade.tradingsymbol, side: autoTradingState.activeTrade.side, quantity: autoTradingState.activeTrade.quantity, entryComplete: autoTradingState.activeTrade.entryComplete }
+      : null,
+  });
+});
+
+app.post('/api/kite/auto-trading/start', requireKiteSession, (req, res) => {
+  if (!liveTradingEnabled) {
+    return res.status(403).json({ error: 'Live trading is disabled. Set ENABLE_LIVE_TRADING=true on the server before starting it.' });
+  }
+  autoTradingState.enabled = true;
+  autoTradingState.lastSignalKey = null;
+  writeSessionDebugLog('auto-trading-started');
+  res.json({ enabled: true });
+});
+
+app.post('/api/kite/auto-trading/stop', requireKiteSession, async (req, res) => {
+  autoTradingState.enabled = false;
+  await closeActiveAutoTrade('manual-stop');
+  writeSessionDebugLog('auto-trading-stopped');
+  res.json({ enabled: false });
+});
+
+app.post('/api/kite/auto-trading/signal', requireKiteSession, async (req, res) => {
+  if (!liveTradingEnabled || !autoTradingState.enabled) {
+    return res.status(403).json({ error: 'Automatic trading is not enabled.' });
+  }
+  if (!isWithinTradingHours()) {
+    return res.status(409).json({ error: 'Automatic orders are allowed only between 09:15 and 15:20 IST.' });
+  }
+  if (autoTradingState.activeTrade) {
+    return res.status(409).json({ error: 'An automatic trade is already active.' });
+  }
+
+  const { action, tradingsymbol, exchange, quantity, entry, target, stopLoss, signalTime } = req.body || {};
+  const normalizedAction = String(action || '').toUpperCase();
+  const normalizedExchange = String(exchange || '').toUpperCase();
+  const normalizedSymbol = String(tradingsymbol || '').trim();
+  const normalizedQuantity = Number(quantity);
+  const normalizedEntry = Number(entry);
+  const normalizedTarget = Number(target);
+  const normalizedStopLoss = Number(stopLoss);
+  const signalKey = `${normalizedSymbol}:${normalizedAction}:${signalTime}`;
+
+  if (!['BUY', 'SELL'].includes(normalizedAction) || normalizedExchange !== 'NFO' || !normalizedSymbol
+    || !Number.isInteger(normalizedQuantity) || normalizedQuantity <= 0
+    || !Number.isFinite(normalizedEntry) || !Number.isFinite(normalizedTarget) || !Number.isFinite(normalizedStopLoss)) {
+    return res.status(400).json({ error: 'A valid NFO signal, quantity, target, and stop loss are required.' });
+  }
+  const invalidExitLevels = normalizedAction === 'BUY'
+    ? normalizedTarget <= normalizedEntry || normalizedStopLoss >= normalizedEntry
+    : normalizedTarget >= normalizedEntry || normalizedStopLoss <= normalizedEntry;
+  if (invalidExitLevels) {
+    return res.status(400).json({ error: 'Target and stop loss must be on opposite sides of the entry price.' });
+  }
+  if (autoTradingState.lastSignalKey === signalKey) {
+    return res.status(409).json({ error: 'This signal has already been submitted.' });
+  }
+
+  const exitSide = normalizedAction === 'BUY' ? 'SELL' : 'BUY';
+  try {
+    const sessionData = { kiteApiKey: req.session.kiteApiKey, kiteAccessToken: req.session.kiteAccessToken };
+    const entryOrderId = await placeKiteOrder(sessionData, {
+      exchange: normalizedExchange,
+      tradingsymbol: normalizedSymbol,
+      transaction_type: normalizedAction,
+      quantity: String(normalizedQuantity),
+      product: 'MIS',
+      order_type: 'MARKET',
+      validity: 'DAY',
+      market_protection: '-1',
+      tag: 'AUTOENTRY',
+    });
+
+    autoTradingState.activeTrade = {
+      sessionData,
+      exchange: normalizedExchange,
+      tradingsymbol: normalizedSymbol,
+      quantity: normalizedQuantity,
+      product: 'MIS',
+      side: normalizedAction,
+      exitSide,
+      entryOrderId,
+      target: normalizedTarget,
+      stopLoss: normalizedStopLoss,
+      entryComplete: false,
+    };
+    autoTradingState.lastSignalKey = signalKey;
+    writeSessionDebugLog('auto-trade-entry-submitted', { symbol: normalizedSymbol, action: normalizedAction, entryOrderId });
+    res.status(202).json({ entryOrderId, status: 'Entry submitted. Target and stop-loss orders will be armed after entry execution.' });
+  } catch (error) {
+    console.error('Automatic order placement failed:', error.response?.data || error.message);
+    res.status(error.response?.status || 502).json({ error: error.response?.data?.message || 'Automatic order placement failed.' });
+  }
 });
 
 app.get('/api/kite/portfolio/holdings', requireKiteSession, (req, res) => {

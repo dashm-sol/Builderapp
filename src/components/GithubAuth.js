@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import './GithubAuth.css';
 
 function GithubAuth({ onAuthSuccess }) {
+  const sessionDurationMs = 24 * 60 * 60 * 1000;
   const [githubUsername, setGithubUsername] = useState('');
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -11,9 +12,8 @@ function GithubAuth({ onAuthSuccess }) {
     const authData = JSON.parse(sessionStorage.getItem('githubAuth') || 'null');
     if (authData && authData.email === 'dashrath.macherla555@gmail.com') {
       const sessionTime = Date.now() - authData.timestamp;
-      const oneHourMs = 60 * 60 * 1000;
       
-      if (sessionTime < oneHourMs) {
+      if (sessionTime < sessionDurationMs) {
         onAuthSuccess(authData.email);
       } else {
         sessionStorage.removeItem('githubAuth');
@@ -113,7 +113,7 @@ function GithubAuth({ onAuthSuccess }) {
           <ul>
             <li>✅ Only GitHub account: <strong>dashm-sol</strong> has access</li>
             <li>✅ Email: <strong>dashrath.macherla555@gmail.com</strong></li>
-            <li>⏱️ Session timeout: <strong>1 hour</strong></li>
+            <li>⏱️ Session timeout: <strong>24 hours</strong></li>
             <li>🔒 Secure: Uses GitHub Public API verification</li>
           </ul>
         </div>
@@ -121,7 +121,7 @@ function GithubAuth({ onAuthSuccess }) {
         <div className="security-footer">
           <p>
             This application is private and only accessible to authorized GitHub accounts.
-            Your session will expire after 1 hour of inactivity.
+            Your session will expire after 24 hours.
           </p>
         </div>
       </div>
