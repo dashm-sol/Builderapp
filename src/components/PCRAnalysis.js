@@ -226,33 +226,85 @@ function getMarketConfirmations(candles) {
   };
 }
 
-function calculateTradeSignal(candles) {
-  if (candles.length < 10) return { action: 'HOLD', pattern: 'Not enough candles', reason: 'Waiting for more OHLC data' };
-  const candlePatterns = detectCandlestickPatterns(candles, candles.length - 1);
-  const chartPatterns = findChartPatterns(candles);
-  const shortAverage = candles.slice(-3).reduce((sum, candle) => sum + candle.c, 0) / 3;
-  const longAverage = candles.slice(-10).reduce((sum, candle) => sum + candle.c, 0) / 10;
-  const latest = candles.at(-1);
-  const previous = candles.at(-2);
-  const trendUp = shortAverage > longAverage && latest.c > previous.c;
-  const trendDown = shortAverage < longAverage && latest.c < previous.c;
-  const chartDirection = classifyChartPatterns(chartPatterns);
-  const market = getMarketConfirmations(candles);
-  if (candlePatterns.bullish.length && chartDirection.bullish.length && trendUp && market.bullish) {
+function calculateInstitutionalTradeSignal(candles) {
+  if (candles.length < 12) {
+    return { action: 'HOLD', pattern: 'Liquidity sweep not formed', reason: 'Not enough candles to confirm a valid sweep and order-block retest.' };
+  }
+
+  const recent = candles.slice(-30);
+  const ema20 = calculateEma(candles, 20).at(-1)?.value || 0;
+  const ema50 = calculateEma(candles, 50).at(-1)?.value || 0;
+  const last = recent.at(-1);
+  const previous = recent.at(-2);
+  const priorSwingHigh = Math.max(...recent.slice(0, -1).map((candle) => candle.h));
+  const priorSwingLow = Math.min(...recent.slice(0, -1).map((candle) => candle.l));
+
+  const priorBearishCandles = recent.slice(-10).filter((candle) => candle.c < candle.o);
+  const priorBullishCandles = recent.slice(-10).filter((candle) => candle.c > candle.o);
+
+  const bullishOrderBlock = priorBearishCandles.length > 0
+    ? {
+        low: Math.min(...priorBearishCandles.map((candle) => candle.l)),
+        high: Math.max(...priorBearishCandles.map((candle) => candle.h)),
+        mid: priorBearishCandles.reduce((sum, candle) => sum + candle.c, 0) / priorBearishCandles.length,
+      }
+    : null;
+
+  const bearishOrderBlock = priorBullishCandles.length > 0
+    ? {
+        low: Math.min(...priorBullishCandles.map((candle) => candle.l)),
+        high: Math.max(...priorBullishCandles.map((candle) => candle.h)),
+        mid: priorBullishCandles.reduce((sum, candle) => sum + candle.c, 0) / priorBullishCandles.length,
+      }
+    : null;
+
+  const bullishSweep = last.h > priorSwingHigh * 1.001
+    && last.c > previous.c
+    && last.c > last.o
+    && last.c > ema20
+    && ema20 > ema50;
+
+  const bearishSweep = last.l < priorSwingLow * 0.999
+    && last.c < previous.c
+    && last.c < last.o
+    && last.c < ema20
+    && ema20 < ema50;
+
+  const bullishRetest = bullishSweep
+    && bullishOrderBlock
+    && last.c >= bullishOrderBlock.mid
+    && last.l <= bullishOrderBlock.high * 1.005;
+
+  const bearishRetest = bearishSweep
+    && bearishOrderBlock
+    && last.c <= bearishOrderBlock.mid
+    && last.h >= bearishOrderBlock.low * 0.995;
+
+  if (bullishRetest) {
     return {
       action: 'BUY',
-      pattern: `Candle: ${candlePatterns.bullish.join(', ')} | Chart: ${chartDirection.bullish.join(', ')} | EMA20 > EMA50 | RSI14 ${market.rsi.toFixed(1)}`,
-      reason: 'Candle, chart, EMA trend, RSI, and price trend all confirm BUY',
+      pattern: `Liquidity sweep + bullish order-block retest | Resistance ${priorSwingHigh.toFixed(2)} | OB ${bullishOrderBlock.low.toFixed(2)}-${bullishOrderBlock.high.toFixed(2)}`,
+      reason: 'Price swept above prior resistance, then re-entered a bearish order block with bullish trend alignment and retest confirmation.',
     };
   }
-  if (candlePatterns.bearish.length && chartDirection.bearish.length && trendDown && market.bearish) {
+
+  if (bearishRetest) {
     return {
       action: 'SELL',
-      pattern: `Candle: ${candlePatterns.bearish.join(', ')} | Chart: ${chartDirection.bearish.join(', ')} | EMA20 < EMA50 | RSI14 ${market.rsi.toFixed(1)}`,
-      reason: 'Candle, chart, EMA trend, RSI, and price trend all confirm SELL',
+      pattern: `Liquidity sweep + bearish order-block retest | Support ${priorSwingLow.toFixed(2)} | OB ${bearishOrderBlock.low.toFixed(2)}-${bearishOrderBlock.high.toFixed(2)}`,
+      reason: 'Price swept below prior support, then re-entered a bullish order block with bearish trend alignment and retest confirmation.',
     };
   }
-  return { action: 'HOLD', pattern: [...candlePatterns.neutral, ...chartPatterns, 'No confirmation'].join(', '), reason: 'Patterns detected, but directional confirmation is missing' };
+
+  return {
+    action: 'HOLD',
+    pattern: 'No valid sweep and retest confirmation',
+    reason: 'The market has not yet produced a clean sweep, retest into the order block, and invalidation confirmation required for an institutional entry.',
+  };
+}
+
+function calculateTradeSignal(candles) {
+  return calculateInstitutionalTradeSignal(candles);
 }
 
 function evaluateSignalWithFutureCandles(signal, future, target, stopLoss) {
@@ -310,6 +362,23 @@ function getStrategyReview(signalRows) {
   return review;
 }
 
+function calculateTradeCost(entry, lotSize) {
+  const quantity = Number(lotSize) || 1;
+  const notional = Number(entry) * quantity;
+  const brokerage = notional * 0.0003;
+  const exchange = notional * 0.0005;
+  const gst = (brokerage + exchange) * 0.18;
+  const stt = notional * 0.0001;
+  const stamp = notional * 0.00003;
+  const totalCharges = brokerage + exchange + gst + stt + stamp;
+
+  return {
+    notional,
+    totalCharges,
+    totalCashRequired: notional + totalCharges,
+  };
+}
+
 function buildSignalRows(candles) {
   return candles
     .map((_, index) => {
@@ -317,23 +386,39 @@ function buildSignalRows(candles) {
       const window = candles.slice(0, index + 1).slice(-40);
       const signal = calculateTradeSignal(window);
       if (signal.action === 'HOLD') return null;
-      const entry = candles[index].c;
-      const recent = candles.slice(Math.max(0, index - 14), index + 1);
-      const averageRange = recent.reduce((sum, candle) => sum + (candle.h - candle.l), 0) / Math.max(recent.length, 1);
+
+      const signalCandle = candles[index];
+      const entry = signalCandle.c;
+      const recent = candles.slice(Math.max(0, index - 20), index + 1);
       const recentLow = Math.min(...recent.map(candle => candle.l));
       const recentHigh = Math.max(...recent.map(candle => candle.h));
-      const risk = Math.max(averageRange * 1.5, entry * 0.003);
-      const stopLoss = signal.action === 'BUY'
-        ? Math.min(recentLow, entry - risk)
-        : Math.max(recentHigh, entry + risk);
-      const target = signal.action === 'BUY'
-        ? entry + ((entry - stopLoss) * 2)
-        : entry - ((stopLoss - entry) * 2);
+      const averageRange = recent.reduce((sum, candle) => sum + (candle.h - candle.l), 0) / Math.max(recent.length, 1);
+      const risk = Math.max(averageRange * 1.2, 0.5);
+
+      if (signal.action === 'BUY') {
+        const blockLow = Math.min(...recent.map(candle => candle.l));
+        const stopLoss = blockLow - risk;
+        const target = Math.max(recentHigh, entry + risk * 2);
+        const future = candles.slice(index + 1);
+        const result = evaluateSignalWithFutureCandles(signal, future, target, stopLoss);
+        return {
+          ...signal,
+          time: signalCandle.x,
+          entry,
+          target,
+          stopLoss,
+          ...result,
+        };
+      }
+
+      const blockHigh = Math.max(...recent.map(candle => candle.h));
+      const stopLoss = blockHigh + risk;
+      const target = Math.min(recentLow, entry - risk * 2);
       const future = candles.slice(index + 1);
       const result = evaluateSignalWithFutureCandles(signal, future, target, stopLoss);
       return {
         ...signal,
-        time: candles[index].x,
+        time: signalCandle.x,
         entry,
         target,
         stopLoss,
@@ -355,6 +440,7 @@ function PCRAnalysis({ apiKey }) {
   const [rsiChartData, setRsiChartData] = useState(null);
   const [tradeSignal, setTradeSignal] = useState({ action: 'HOLD', pattern: 'Waiting for data', reason: '' });
   const [signalRows, setSignalRows] = useState([]);
+  const [signalFilter, setSignalFilter] = useState('ALL');
   const candleChartRef = React.useRef(null);
   const [latestCandle, setLatestCandle] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -455,7 +541,7 @@ function PCRAnalysis({ apiKey }) {
       });
 
       const normalized = Array.isArray(candles) ? candles : [];
-      const candleData = normalized.map((item) => {
+      const toCandleData = (rawCandles) => rawCandles.map((item) => {
         const timestamp = Array.isArray(item) ? item[0] : item?.timestamp;
         const dateValue = new Date(timestamp).getTime();
         return {
@@ -470,6 +556,18 @@ function PCRAnalysis({ apiKey }) {
         && Number.isFinite(candle.h)
         && Number.isFinite(candle.l)
         && Number.isFinite(candle.c));
+      const candleData = toCandleData(normalized);
+      let decisionCandleData = candleData;
+
+      if (interval === 'minute') {
+        const fiveMinuteCandles = await kiteAPI.getHistoricalData({
+          instrumentToken: strike.instrumentToken,
+          interval: '5minute',
+          from: formatDateTime(from, '09:15:00'),
+          to: formatDateTime(to, '23:59:59'),
+        });
+        decisionCandleData = toCandleData(Array.isArray(fiveMinuteCandles) ? fiveMinuteCandles : []);
+      }
 
       const latest = normalized[normalized.length - 1];
       setLatestCandle(
@@ -479,8 +577,8 @@ function PCRAnalysis({ apiKey }) {
       );
 
       setCandleData(candleData);
-      setTradeSignal(calculateTradeSignal(candleData));
-      setSignalRows(buildSignalRows(candleData));
+  setTradeSignal(calculateTradeSignal(decisionCandleData));
+  setSignalRows(buildSignalRows(decisionCandleData));
       setCloseChartData({
         datasets: [{
           label: `${strike.label} close • ${interval}`,
@@ -650,23 +748,38 @@ function PCRAnalysis({ apiKey }) {
 
   const pcrVolume = pcrData?.pcr_volume || 0;
   const pcrOI = pcrData?.pcr_oi || 0;
-  const evaluatedSignals = signalRows.filter(signal => signal.outcome === 'True' || signal.outcome === 'False');
+  const filteredSignalRows = signalFilter === 'ALL'
+    ? signalRows
+    : signalRows.filter(signal => signal.action === signalFilter);
+  const evaluatedSignals = filteredSignalRows.filter(signal => signal.outcome === 'True' || signal.outcome === 'False');
   const successfulSignals = evaluatedSignals.filter(signal => signal.outcome === 'True');
   const overallSuccess = evaluatedSignals.length > 0
     ? (successfulSignals.length / evaluatedSignals.length) * 100
     : 0;
-  const strategyReview = getStrategyReview(signalRows);
   const lotSize = Number(selectedStrike?.lotSize) || 1;
-  const realizedInvestment = evaluatedSignals.reduce((total, signal) => total + (signal.entry * lotSize), 0);
+  const tradeCostForSignal = (signal) => calculateTradeCost(signal.entry, lotSize);
+  const latestTradeCost = filteredSignalRows.length > 0
+    ? tradeCostForSignal(filteredSignalRows[0])
+    : null;
+  const winAmount = evaluatedSignals
+    .filter(signal => signal.outcome === 'True')
+    .reduce((total, signal) => total + (Math.abs(signal.target - signal.entry) * lotSize) + tradeCostForSignal(signal).totalCharges, 0);
+  const lossAmount = evaluatedSignals
+    .filter(signal => signal.outcome === 'False')
+    .reduce((total, signal) => total + (Math.abs(signal.stopLoss - signal.entry) * lotSize) + tradeCostForSignal(signal).totalCharges, 0);
+  const winAmountPercent = (winAmount + lossAmount) > 0 ? (winAmount / (winAmount + lossAmount)) * 100 : 0;
+  const strategyReview = getStrategyReview(filteredSignalRows);
+  const realizedInvestment = evaluatedSignals.reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
   const realizedProfitLoss = evaluatedSignals.reduce((total, signal) => {
     const priceMove = signal.outcome === 'True'
       ? Math.abs(signal.target - signal.entry)
       : -Math.abs(signal.stopLoss - signal.entry);
-    return total + (priceMove * lotSize);
+    const cost = tradeCostForSignal(signal);
+    return total + ((priceMove * lotSize) - cost.totalCharges);
   }, 0);
-  const pendingInvestment = signalRows
+  const pendingInvestment = filteredSignalRows
     .filter(signal => signal.outcome === 'Pending')
-    .reduce((total, signal) => total + (signal.entry * lotSize), 0);
+    .reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
 
   return (
     <div className="pcr-container">
@@ -844,11 +957,22 @@ function PCRAnalysis({ apiKey }) {
 
           <section className="signal-table-panel">
             <div className="signal-table-header">
-              <h3>Combined Signals</h3>
+              <h3>{selectedInterval === 'minute' ? 'Combined Signals (5m strategy reference)' : 'Combined Signals'}</h3>
+              <div className="signal-filter-row">
+                <label>
+                  View:
+                  <select value={signalFilter} onChange={(event) => setSignalFilter(event.target.value)}>
+                    <option value="ALL">All</option>
+                    <option value="BUY">Buy only</option>
+                    <option value="SELL">Sell only</option>
+                  </select>
+                </label>
+              </div>
               <div className="signal-summary">
-                <span>{signalRows.length} decisions | Overall success: {overallSuccess.toFixed(1)}%</span>
-                <span>Completed investment: ₹{realizedInvestment.toFixed(2)} | Gross P/L: <b className={realizedProfitLoss >= 0 ? 'profit' : 'loss'}>{realizedProfitLoss >= 0 ? '+' : ''}₹{realizedProfitLoss.toFixed(2)}</b></span>
-                <span>Pending investment: ₹{pendingInvestment.toFixed(2)} | Lot size: {lotSize}</span>
+                <span>{filteredSignalRows.length} decisions | Overall success: {overallSuccess.toFixed(1)}%</span>
+                {latestTradeCost && <span>Latest one-trade cost: ₹{latestTradeCost.totalCashRequired.toFixed(2)} (Premium ₹{latestTradeCost.notional.toFixed(2)} + charges ₹{latestTradeCost.totalCharges.toFixed(2)})</span>}
+                <span>Win amount: {winAmountPercent.toFixed(1)}% | Completed investment: ₹{realizedInvestment.toFixed(2)}</span>
+                <span>Gross P/L: <b className={realizedProfitLoss >= 0 ? 'profit' : 'loss'}>{realizedProfitLoss >= 0 ? '+' : ''}₹{realizedProfitLoss.toFixed(2)}</b> | Pending investment: ₹{pendingInvestment.toFixed(2)} | Lot size: {lotSize}</span>
               </div>
             </div>
             {strategyReview.length > 0 && (
@@ -857,8 +981,8 @@ function PCRAnalysis({ apiKey }) {
                 {strategyReview.map(item => <span key={item}>{item}</span>)}
               </div>
             )}
-            {signalRows.length === 0 ? (
-              <div className="signal-table-empty">No combined BUY/SELL confirmation in this range.</div>
+            {filteredSignalRows.length === 0 ? (
+              <div className="signal-table-empty">No {signalFilter === 'ALL' ? 'combined BUY/SELL confirmation' : `${signalFilter.toLowerCase()} signal`} in this range.</div>
             ) : (
               <div className="signal-table-scroll">
                 <table className="signal-table">
@@ -866,6 +990,8 @@ function PCRAnalysis({ apiKey }) {
                     <tr>
                       <th>Time</th>
                       <th>Action</th>
+                      <th>Buy/Sell Price</th>
+                      <th>Trade Cost</th>
                       <th>Candlestick</th>
                       <th>Chart pattern</th>
                       <th>Entry</th>
@@ -877,13 +1003,16 @@ function PCRAnalysis({ apiKey }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {signalRows.map((signal, index) => {
-                      const parts = signal.pattern.split(' | Chart: ');
+                    {filteredSignalRows.map((signal, index) => {
+                      const parts = signal.pattern.split(' | ');
+                      const tradeCost = tradeCostForSignal(signal);
                       return (
                         <tr key={`${signal.time}-${index}`}>
                           <td>{new Date(signal.time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
                           <td><span className={`signal-pill ${signal.action.toLowerCase()}`}>{signal.action}</span></td>
-                          <td>{parts[0].replace('Candle: ', '')}</td>
+                          <td>₹{Number(signal.entry).toFixed(2)}</td>
+                          <td>₹{tradeCost.totalCashRequired.toFixed(2)}<small>Premium ₹{tradeCost.notional.toFixed(2)} + fees ₹{tradeCost.totalCharges.toFixed(2)}</small></td>
+                          <td>{parts[0].replace('Liquidity sweep + ', '').replace('Institutional ', '')}</td>
                           <td>{parts[1] || 'Confirmed structure'}</td>
                           <td>₹{Number(signal.entry).toFixed(2)}</td>
                           <td>₹{Number(signal.target).toFixed(2)}</td>
