@@ -292,11 +292,19 @@ async function closeActiveAutoTrade(reason) {
   }
 }
 
-function isWithinTradingHours() {
+function getIndiaTradingMinutes() {
   const now = new Date();
   const indiaTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-  const day = indiaTime.getDay();
-  const minutes = indiaTime.getHours() * 60 + indiaTime.getMinutes();
+  return { day: indiaTime.getDay(), minutes: indiaTime.getHours() * 60 + indiaTime.getMinutes() };
+}
+
+function isWithinEntryHours() {
+  const { day, minutes } = getIndiaTradingMinutes();
+  return day >= 1 && day <= 5 && minutes >= 9 * 60 + 15 && minutes < 15 * 60;
+}
+
+function isWithinPositionHours() {
+  const { day, minutes } = getIndiaTradingMinutes();
   return day >= 1 && day <= 5 && minutes >= 9 * 60 + 15 && minutes < 15 * 60 + 20;
 }
 
@@ -305,7 +313,7 @@ setInterval(async () => {
   if (!activeTrade) return;
 
   try {
-    if (!isWithinTradingHours()) {
+    if (!isWithinPositionHours()) {
       await closeActiveAutoTrade('intraday-cutoff');
       return;
     }
@@ -520,8 +528,8 @@ app.post('/api/kite/auto-trading/signal', requireKiteSession, async (req, res) =
   if (!liveTradingEnabled || !autoTradingState.enabled) {
     return res.status(403).json({ error: 'Automatic trading is not enabled.' });
   }
-  if (!isWithinTradingHours()) {
-    return res.status(409).json({ error: 'Automatic orders are allowed only between 09:15 and 15:20 IST.' });
+  if (!isWithinEntryHours()) {
+    return res.status(409).json({ error: 'New automatic orders are allowed only between 09:15 and 15:00 IST.' });
   }
   if (autoTradingState.activeTrade) {
     return res.status(409).json({ error: 'An automatic trade is already active.' });

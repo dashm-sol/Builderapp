@@ -205,10 +205,17 @@ function findChartPatterns(candles) {
 function classifyChartPatterns(patterns) {
   const bullishNames = ['bottom', 'ascending', 'rising', 'bullish', 'inverse head', 'falling wedge', 'bull flag', 'bullish pennant', 'cup and handle'];
   const bearishNames = ['top', 'descending', 'falling', 'bearish', 'head and shoulders', 'rising wedge', 'bear flag', 'bearish pennant'];
-  return {
-    bullish: patterns.filter(pattern => bullishNames.some(name => pattern.toLowerCase().includes(name))),
-    bearish: patterns.filter(pattern => bearishNames.some(name => pattern.toLowerCase().includes(name))),
-  };
+  const bullish = [];
+  const bearish = [];
+  patterns.forEach((pattern) => {
+    const normalized = pattern.toLowerCase();
+    if (bullishNames.some(name => normalized.includes(name))) {
+      bullish.push(pattern);
+    } else if (bearishNames.some(name => normalized.includes(name))) {
+      bearish.push(pattern);
+    }
+  });
+  return { bullish, bearish };
 }
 
 function getMarketConfirmations(candles) {
@@ -303,8 +310,92 @@ function calculateInstitutionalTradeSignal(candles) {
   };
 }
 
-function calculateTradeSignal(candles) {
-  return calculateInstitutionalTradeSignal(candles);
+function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = []) {
+  const institutionalSignal = calculateInstitutionalTradeSignal(candles);
+  if (candles.length < 40 || fiveMinuteCandles.length < 40) {
+    return {
+      ...institutionalSignal,
+      minuteConfirmation: { status: 'Need at least 40 one-minute and 40 five-minute candles for multi-timeframe chart confirmation.' },
+    };
+  }
+
+  const window = candles.slice(-40);
+  const candlestickPatterns = detectCandlestickPatterns(window, window.length - 1);
+  const chartPatterns = classifyChartPatterns(findChartPatterns(window));
+  const fiveMinuteChartPatterns = classifyChartPatterns(findChartPatterns(fiveMinuteCandles.slice(-40)));
+  const ema10Series = calculateEma(candles, 10);
+  const ema20Series = calculateEma(candles, 20);
+  const ema10 = ema10Series.at(-1)?.value || 0;
+  const ema20 = ema20Series.at(-1)?.value || 0;
+  const previousEma10 = ema10Series.at(-2)?.value || 0;
+  const previousEma20 = ema20Series.at(-2)?.value || 0;
+  const lastClose = window.at(-1).c;
+  const crossedUp = previousEma10 <= previousEma20 && ema10 > ema20;
+  const crossedDown = previousEma10 >= previousEma20 && ema10 < ema20;
+  const emaStatus = crossedUp
+    ? 'EMA10 crossed above EMA20 on the latest one-minute candle.'
+    : crossedDown
+      ? 'EMA10 crossed below EMA20 on the latest one-minute candle.'
+      : ema10 > ema20
+        ? 'EMA10 remains above EMA20; no fresh crossover on the latest candle.'
+        : ema10 < ema20
+          ? 'EMA10 remains below EMA20; no fresh crossover on the latest candle.'
+          : 'EMA10 and EMA20 are equal.';
+  const minuteConfirmation = {
+    candlestick: `Bullish: ${candlestickPatterns.bullish.join(', ') || 'none'}; bearish: ${candlestickPatterns.bearish.join(', ') || 'none'}`,
+    chart: `1m bullish: ${chartPatterns.bullish.join(', ') || 'none'}; bearish: ${chartPatterns.bearish.join(', ') || 'none'}`,
+    fiveMinuteChart: `5m bullish: ${fiveMinuteChartPatterns.bullish.join(', ') || 'none'}; bearish: ${fiveMinuteChartPatterns.bearish.join(', ') || 'none'}`,
+    ema: `EMA10 ₹${ema10.toFixed(2)} | EMA20 ₹${ema20.toFixed(2)} | Close ₹${lastClose.toFixed(2)}`,
+    emaStatus,
+  };
+
+  if (!['BUY', 'SELL'].includes(institutionalSignal.action)) {
+    return { ...institutionalSignal, minuteConfirmation };
+  }
+
+  const isBuy = institutionalSignal.action === 'BUY';
+  const alignedCandlestick = isBuy ? candlestickPatterns.bullish : candlestickPatterns.bearish;
+  const alignedOneMinuteChart = isBuy ? chartPatterns.bullish : chartPatterns.bearish;
+  const alignedFiveMinuteChart = isBuy ? fiveMinuteChartPatterns.bullish : fiveMinuteChartPatterns.bearish;
+  const conflictingOneMinuteChart = isBuy ? chartPatterns.bearish : chartPatterns.bullish;
+  const conflictingFiveMinuteChart = isBuy ? fiveMinuteChartPatterns.bearish : fiveMinuteChartPatterns.bullish;
+  const emaAligned = isBuy
+    ? ema10 > ema20 && lastClose > ema10
+    : ema10 < ema20 && lastClose < ema10;
+
+  if (alignedCandlestick.length === 0 || alignedOneMinuteChart.length === 0 || alignedFiveMinuteChart.length === 0
+    || conflictingOneMinuteChart.length > 0 || conflictingFiveMinuteChart.length > 0 || !emaAligned) {
+    return {
+      action: 'HOLD',
+      pattern: 'One-minute confirmation incomplete',
+      reason: 'Requires liquidity sweep/order-block with support-resistance, aligned one-minute and five-minute chart patterns, no opposite chart structure, an aligned candlestick pattern, and EMA 10/20 alignment.',
+      minuteConfirmation,
+    };
+  }
+
+  return {
+    ...institutionalSignal,
+    pattern: `${institutionalSignal.pattern} | Candle ${alignedCandlestick.join(', ')} | 1m Chart ${alignedOneMinuteChart.join(', ')} | 5m Chart ${alignedFiveMinuteChart.join(', ')} | EMA10 ${ema10.toFixed(2)} ${isBuy ? '>' : '<'} EMA20 ${ema20.toFixed(2)}`,
+    reason: `${institutionalSignal.reason} One-minute candlestick, one-minute chart structure, five-minute chart structure, and EMA 10/20 all align.`,
+    minuteConfirmation,
+  };
+}
+
+function isBeforeThreePmIst(timestamp) {
+  const indiaTime = new Date(new Date(timestamp).toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  return indiaTime.getHours() * 60 + indiaTime.getMinutes() < 15 * 60;
+}
+
+function calculateTradeSignal(candles, oneMinuteMode = false, fiveMinuteCandles = []) {
+  const signal = oneMinuteMode ? calculateOneMinuteTradeSignal(candles, fiveMinuteCandles) : calculateInstitutionalTradeSignal(candles);
+  if (['BUY', 'SELL'].includes(signal.action) && !isBeforeThreePmIst(candles.at(-1)?.x)) {
+    return {
+      action: 'HOLD',
+      pattern: 'New entries disabled after 3:00 PM IST',
+      reason: 'No new BUY or SELL signal is allowed after 3:00 PM IST. Existing positions must close using their target, stop loss, or intraday square-off.',
+    };
+  }
+  return signal;
 }
 
 function calculateCurrentTradePlan(candles, signal) {
@@ -336,6 +427,7 @@ function evaluateSignalWithFutureCandles(signal, future, target, stopLoss) {
         outcome: 'Ambiguous',
         evaluation: `${triggerTime}: high/low touched both target and stop`,
         candlesToOutcome: futureIndex + 1,
+        closedAt: candle.x,
       };
     }
     if (hitTarget) {
@@ -344,6 +436,7 @@ function evaluateSignalWithFutureCandles(signal, future, target, stopLoss) {
         outcome: 'True',
         evaluation: `${triggerTime}: ${signal.action === 'BUY' ? 'high' : 'low'} ₹${triggerPrice.toFixed(2)} reached target`,
         candlesToOutcome: futureIndex + 1,
+        closedAt: candle.x,
       };
     }
     if (hitStop) {
@@ -353,6 +446,7 @@ function evaluateSignalWithFutureCandles(signal, future, target, stopLoss) {
         outcome: 'False',
         evaluation: `${triggerTime}: ${signal.action === 'BUY' ? 'low' : 'high'} ₹${triggerPrice.toFixed(2)} hit stop ₹${stopLoss.toFixed(2)} (₹${adverseMove.toFixed(2)} beyond stop)`,
         candlesToOutcome: futureIndex + 1,
+        closedAt: candle.x,
       };
     }
   }
@@ -394,12 +488,16 @@ function calculateTradeCost(entry, lotSize) {
   };
 }
 
-function buildSignalRows(candles) {
+function buildSignalRows(candles, oneMinuteMode = false, fiveMinuteCandles = []) {
+  let activeTradeUntil = 0;
   return candles
     .map((_, index) => {
       if (index < 10) return null;
+      if (candles[index].x <= activeTradeUntil) return null;
+      if (!isBeforeThreePmIst(candles[index].x)) return null;
       const window = candles.slice(0, index + 1).slice(-40);
-      const signal = calculateTradeSignal(window);
+      const fiveMinuteWindow = fiveMinuteCandles.filter(candle => candle.x <= candles[index].x).slice(-40);
+      const signal = calculateTradeSignal(window, oneMinuteMode, fiveMinuteWindow);
       if (signal.action === 'HOLD') return null;
 
       const signalCandle = candles[index];
@@ -416,6 +514,7 @@ function buildSignalRows(candles) {
         const target = Math.max(recentHigh, entry + risk * 2);
         const future = candles.slice(index + 1);
         const result = evaluateSignalWithFutureCandles(signal, future, target, stopLoss);
+        activeTradeUntil = result.closedAt || Number.MAX_SAFE_INTEGER;
         return {
           ...signal,
           time: signalCandle.x,
@@ -431,6 +530,7 @@ function buildSignalRows(candles) {
       const target = Math.min(recentLow, entry - risk * 2);
       const future = candles.slice(index + 1);
       const result = evaluateSignalWithFutureCandles(signal, future, target, stopLoss);
+      activeTradeUntil = result.closedAt || Number.MAX_SAFE_INTEGER;
       return {
         ...signal,
         time: signalCandle.x,
@@ -578,16 +678,18 @@ function PCRAnalysis({ apiKey }) {
         && Number.isFinite(candle.l)
         && Number.isFinite(candle.c));
       const candleData = toCandleData(normalized);
-      let decisionCandleData = candleData;
+      const decisionCandleData = candleData;
+      const oneMinuteMode = interval === 'minute';
+      let fiveMinuteCandleData = [];
 
-      if (interval === 'minute') {
+      if (oneMinuteMode) {
         const fiveMinuteCandles = await kiteAPI.getHistoricalData({
           instrumentToken: strike.instrumentToken,
           interval: '5minute',
           from: formatDateTime(from, '09:15:00'),
           to: formatDateTime(to, '23:59:59'),
         });
-        decisionCandleData = toCandleData(Array.isArray(fiveMinuteCandles) ? fiveMinuteCandles : []);
+        fiveMinuteCandleData = toCandleData(Array.isArray(fiveMinuteCandles) ? fiveMinuteCandles : []);
       }
 
       const latest = normalized[normalized.length - 1];
@@ -597,11 +699,11 @@ function PCRAnalysis({ apiKey }) {
           : latest || null
       );
 
-        const currentSignal = calculateTradeSignal(decisionCandleData);
+        const currentSignal = calculateTradeSignal(decisionCandleData, oneMinuteMode, fiveMinuteCandleData);
         setCandleData(candleData);
         setTradeSignal(currentSignal);
         setAutoTradePlan(calculateCurrentTradePlan(decisionCandleData, currentSignal));
-        setSignalRows(buildSignalRows(decisionCandleData));
+        setSignalRows(buildSignalRows(decisionCandleData, oneMinuteMode, fiveMinuteCandleData));
       setCloseChartData({
         datasets: [{
           label: `${strike.label} close • ${interval}`,
@@ -735,10 +837,10 @@ function PCRAnalysis({ apiKey }) {
       low: candle.l,
       close: candle.c,
     })));
-    const ema20 = chart.addSeries(LineSeries, { color: '#fbbf24', lineWidth: 2, title: 'EMA 20', priceLineVisible: false });
-    const ema50 = chart.addSeries(LineSeries, { color: '#38bdf8', lineWidth: 2, title: 'EMA 50', priceLineVisible: false });
+    const ema10 = chart.addSeries(LineSeries, { color: '#fbbf24', lineWidth: 2, title: 'EMA 10', priceLineVisible: false });
+    const ema20 = chart.addSeries(LineSeries, { color: '#38bdf8', lineWidth: 2, title: 'EMA 20', priceLineVisible: false });
+    ema10.setData(calculateEma(candleData, 10));
     ema20.setData(calculateEma(candleData, 20));
-    ema50.setData(calculateEma(candleData, 50));
     const markers = [];
     candleData.forEach((candle, index) => {
       if (index < 1) return;
@@ -979,6 +1081,15 @@ function PCRAnalysis({ apiKey }) {
             <div>
               <strong>{tradeSignal.pattern}</strong>
               <span>{tradeSignal.reason}</span>
+              {selectedInterval === 'minute' && tradeSignal.minuteConfirmation && (
+                <div className="minute-confirmation">
+                  <span>{tradeSignal.minuteConfirmation.candlestick}</span>
+                  <span>{tradeSignal.minuteConfirmation.chart}</span>
+                  <span>{tradeSignal.minuteConfirmation.fiveMinuteChart}</span>
+                  <span>{tradeSignal.minuteConfirmation.ema}</span>
+                  <span>{tradeSignal.minuteConfirmation.emaStatus || tradeSignal.minuteConfirmation.status}</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1012,7 +1123,7 @@ function PCRAnalysis({ apiKey }) {
           ) : candleData.length > 0 ? (
             <div className="chart-stack">
               <section className="chart-block">
-                <h4>OHLC Candlesticks <span className="chart-legend"><i className="legend-candle" /> Candle <i className="legend-ema20" /> EMA20 <i className="legend-ema50" /> EMA50</span></h4>
+                <h4>OHLC Candlesticks <span className="chart-legend"><i className="legend-candle" /> Candle <i className="legend-ema20" /> EMA10 <i className="legend-ema50" /> EMA20</span></h4>
                 <div ref={candleChartRef} className="chart-wrapper" />
               </section>
 
@@ -1068,7 +1179,7 @@ function PCRAnalysis({ apiKey }) {
 
           <section className="signal-table-panel">
             <div className="signal-table-header">
-              <h3>{selectedInterval === 'minute' ? 'Combined Signals (5m strategy reference)' : 'Combined Signals'}</h3>
+              <h3>{selectedInterval === 'minute' ? 'Combined Signals (1m multi-confirmation)' : 'Combined Signals'}</h3>
               <div className="signal-filter-row">
                 <label>
                   View:
@@ -1105,6 +1216,9 @@ function PCRAnalysis({ apiKey }) {
                       <th>Trade Cost</th>
                       <th>Candlestick</th>
                       <th>Chart pattern</th>
+                      {selectedInterval === 'minute' && <th>1m Chart Structure</th>}
+                      {selectedInterval === 'minute' && <th>5m Chart Structure</th>}
+                      {selectedInterval === 'minute' && <th>1m EMA 10/20</th>}
                       <th>Entry</th>
                       <th>Target</th>
                       <th>Stop loss</th>
@@ -1125,6 +1239,9 @@ function PCRAnalysis({ apiKey }) {
                           <td>₹{tradeCost.totalCashRequired.toFixed(2)}<small>Premium ₹{tradeCost.notional.toFixed(2)} + fees ₹{tradeCost.totalCharges.toFixed(2)}</small></td>
                           <td>{parts[0].replace('Liquidity sweep + ', '').replace('Institutional ', '')}</td>
                           <td>{parts[1] || 'Confirmed structure'}</td>
+                          {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.chart || 'No chart structure confirmation'}</td>}
+                          {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.fiveMinuteChart || 'No 5m chart structure confirmation'}</td>}
+                          {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.emaStatus || 'EMA confirmation unavailable'}<small>{signal.minuteConfirmation?.ema || ''}</small></td>}
                           <td>₹{Number(signal.entry).toFixed(2)}</td>
                           <td>₹{Number(signal.target).toFixed(2)}</td>
                           <td>₹{Number(signal.stopLoss).toFixed(2)}</td>
