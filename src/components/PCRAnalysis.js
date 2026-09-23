@@ -239,6 +239,160 @@ function classifyChartPatterns(patterns) {
   return { bullish, bearish };
 }
 
+// 1-MINUTE ONLY: Detect 8 specific breakout patterns with entry and stop levels
+function detectOneMinuteBreakoutPatterns(candles) {
+  if (candles.length < 30) return { bullish: [], bearish: [], breakoutLevels: {} };
+  
+  const recent = candles.slice(-40);
+  const highs = recent.filter((c, i) => i > 0 && i < recent.length - 1 && c.h >= recent[i - 1].h && c.h >= recent[i + 1].h);
+  const lows = recent.filter((c, i) => i > 0 && i < recent.length - 1 && c.l <= recent[i - 1].l && c.l <= recent[i + 1].l);
+  
+  const bullish = [];
+  const bearish = [];
+  const breakoutLevels = {};
+  
+  // 1. DOUBLE BOTTOM: Two lows at similar level, breakout above middle peak
+  if (lows.length >= 2) {
+    const lastLow = lows.at(-1).l;
+    const secondLastLow = lows.at(-2).l;
+    if (Math.abs(lastLow - secondLastLow) / Math.max(lastLow, secondLastLow) < 0.005) { // Within 0.5%
+      const peaksBetween = recent.filter(c => c.h > lastLow && c.h > secondLastLow);
+      const centralPeak = Math.max(...peaksBetween.map(c => c.h));
+      bullish.push('Double Bottom');
+      breakoutLevels['Double Bottom'] = {
+        entry: centralPeak, // Breakout above central peak
+        stopLoss: Math.min(lastLow, secondLastLow), // Below second bottom
+        type: 'BUY'
+      };
+    }
+  }
+  
+  // 2. INVERSE HEAD & SHOULDERS: Trough, Higher trough, Lower trough, neckline
+  if (lows.length >= 3) {
+    const leftShoulder = lows.at(-3).l;
+    const head = lows.at(-2).l;
+    const rightShoulder = lows.at(-1).l;
+    if (head < leftShoulder && head < rightShoulder) { // Head is lowest
+      const neckline = Math.max(leftShoulder, rightShoulder); // Connect shoulder highs
+      bullish.push('Inverse Head & Shoulders');
+      breakoutLevels['Inverse Head & Shoulders'] = {
+        entry: neckline, // Breakout above neckline
+        stopLoss: rightShoulder, // Just below right shoulder
+        type: 'BUY'
+      };
+    }
+  }
+  
+  // 3. ASCENDING TRIANGLE: Rising lows, flat resistance
+  if (lows.length >= 2) {
+    const lastLow = lows.at(-1).l;
+    const prevLow = lows.at(-2).l;
+    if (lastLow > prevLow) { // Rising lows
+      const resistance = Math.max(...recent.map(c => c.h));
+      const resistanceTolerance = resistance * 0.005;
+      const topBound = recent.filter(c => c.h >= resistance - resistanceTolerance);
+      if (topBound.length >= 2) { // Flat resistance
+        bullish.push('Ascending Triangle');
+        breakoutLevels['Ascending Triangle'] = {
+          entry: resistance, // Breakout above flat resistance
+          stopLoss: prevLow, // Below ascending trendline (previous low)
+          type: 'BUY'
+        };
+      }
+    }
+  }
+  
+  // 4. BULLISH FLAG: Pole up, consolidation below, breakout
+  const first = recent[0].c;
+  const mid = recent[Math.floor(recent.length / 2)].c;
+  const last = recent.at(-1).c;
+  if (mid > first && last > first) { // Uptrend exists
+    const flagStart = Math.floor(recent.length / 2);
+    const flagZone = recent.slice(flagStart);
+    const flagHigh = Math.max(...flagZone.map(c => c.h));
+    const flagLow = Math.min(...flagZone.map(c => c.l));
+    const poleHigh = Math.max(...recent.slice(0, flagStart).map(c => c.h));
+    if (flagHigh < poleHigh && flagLow > 0) { // Flag is consolidation
+      bullish.push('Bullish Flag');
+      breakoutLevels['Bullish Flag'] = {
+        entry: flagHigh, // Breakout above flag channel high
+        stopLoss: flagLow, // Inside flag's lowest bounds
+        type: 'BUY'
+      };
+    }
+  }
+  
+  // 5. HEAD & SHOULDERS: Peak, Higher peak, Lower peak, neckline
+  if (highs.length >= 3) {
+    const leftShoulder = highs.at(-3).h;
+    const head = highs.at(-2).h;
+    const rightShoulder = highs.at(-1).h;
+    if (head > leftShoulder && head > rightShoulder) { // Head is highest
+      const neckline = Math.min(leftShoulder, rightShoulder); // Connect shoulder lows
+      bearish.push('Head & Shoulders');
+      breakoutLevels['Head & Shoulders'] = {
+        entry: neckline, // Breakout below neckline
+        stopLoss: rightShoulder, // Above right shoulder
+        type: 'SELL'
+      };
+    }
+  }
+  
+  // 6. DOUBLE TOP: Two highs at similar level, breakout below middle valley
+  if (highs.length >= 2) {
+    const lastHigh = highs.at(-1).h;
+    const secondLastHigh = highs.at(-2).h;
+    if (Math.abs(lastHigh - secondLastHigh) / Math.max(lastHigh, secondLastHigh) < 0.005) { // Within 0.5%
+      const valleysBetween = recent.filter(c => c.l < lastHigh && c.l < secondLastHigh);
+      const centralValley = Math.min(...valleysBetween.map(c => c.l));
+      bearish.push('Double Top');
+      breakoutLevels['Double Top'] = {
+        entry: centralValley, // Breakout below central valley
+        stopLoss: Math.max(lastHigh, secondLastHigh), // Above second peak
+        type: 'SELL'
+      };
+    }
+  }
+  
+  // 7. BEARISH FLAG: Pole down, consolidation above, breakout
+  if (mid < first && last < first) { // Downtrend exists
+    const flagStart = Math.floor(recent.length / 2);
+    const flagZone = recent.slice(flagStart);
+    const flagHigh = Math.max(...flagZone.map(c => c.h));
+    const flagLow = Math.min(...flagZone.map(c => c.l));
+    const poleLow = Math.min(...recent.slice(0, flagStart).map(c => c.l));
+    if (flagLow > poleLow && flagHigh > 0) { // Flag is consolidation
+      bearish.push('Bearish Flag');
+      breakoutLevels['Bearish Flag'] = {
+        entry: flagLow, // Breakout below flag channel low
+        stopLoss: flagHigh, // Inside flag's highest bounds
+        type: 'SELL'
+      };
+    }
+  }
+  
+  // 8. DESCENDING TRIANGLE: Falling highs, flat support
+  if (highs.length >= 2) {
+    const lastHigh = highs.at(-1).h;
+    const prevHigh = highs.at(-2).h;
+    if (lastHigh < prevHigh) { // Falling highs
+      const support = Math.min(...recent.map(c => c.l));
+      const supportTolerance = support * 0.005;
+      const bottomBound = recent.filter(c => c.l <= support + supportTolerance);
+      if (bottomBound.length >= 2) { // Flat support
+        bearish.push('Descending Triangle');
+        breakoutLevels['Descending Triangle'] = {
+          entry: support, // Breakout below flat support
+          stopLoss: prevHigh, // Above descending trendline (previous high)
+          type: 'SELL'
+        };
+      }
+    }
+  }
+  
+  return { bullish, bearish, breakoutLevels };
+}
+
 // Detect high-probability 1-minute specific patterns for scalping/intraday
 function detectOneMinutePatterns(candles) {
   if (candles.length < 10) return { bullish: [], bearish: [] };
@@ -325,136 +479,77 @@ function getMarketConfirmations(candles) {
 }
 
 function calculateInstitutionalTradeSignal(candles) {
-  if (candles.length < 12) {
-    return { action: 'HOLD', pattern: 'Liquidity sweep not formed', reason: 'Not enough candles to confirm a valid sweep and order-block retest.' };
+  if (candles.length < 20) {
+    return { action: 'HOLD', pattern: 'Insufficient data', reason: 'Need at least 20 candles for 5-minute analysis' };
   }
-
-  const recent = candles.slice(-30);
-  const ema20 = calculateEma(candles, 20).at(-1)?.value || 0;
-  const ema50 = calculateEma(candles, 50).at(-1)?.value || 0;
-  const last = recent.at(-1);
-  const previous = recent.at(-2);
-  const priorSwingHigh = Math.max(...recent.slice(0, -1).map((candle) => candle.h));
-  const priorSwingLow = Math.min(...recent.slice(0, -1).map((candle) => candle.l));
-
-  const priorBearishCandles = recent.slice(-10).filter((candle) => candle.c < candle.o);
-  const priorBullishCandles = recent.slice(-10).filter((candle) => candle.c > candle.o);
-
-  const bullishOrderBlock = priorBearishCandles.length > 0
-    ? {
-        low: Math.min(...priorBearishCandles.map((candle) => candle.l)),
-        high: Math.max(...priorBearishCandles.map((candle) => candle.h)),
-        mid: priorBearishCandles.reduce((sum, candle) => sum + candle.c, 0) / priorBearishCandles.length,
-      }
-    : null;
-
-  const bearishOrderBlock = priorBullishCandles.length > 0
-    ? {
-        low: Math.min(...priorBullishCandles.map((candle) => candle.l)),
-        high: Math.max(...priorBullishCandles.map((candle) => candle.h)),
-        mid: priorBullishCandles.reduce((sum, candle) => sum + candle.c, 0) / priorBullishCandles.length,
-      }
-    : null;
-
-  const bullishSweep = last.h > priorSwingHigh * 1.001
-    && last.c > previous.c
-    && last.c > last.o
-    && last.c > ema20
-    && ema20 > ema50;
-
-  const bearishSweep = last.l < priorSwingLow * 0.999
-    && last.c < previous.c
-    && last.c < last.o
-    && last.c < ema20
-    && ema20 < ema50;
-
-  const bullishRetest = bullishSweep
-    && bullishOrderBlock
-    && last.c >= bullishOrderBlock.mid
-    && last.l <= bullishOrderBlock.high * 1.005;
-
-  const bearishRetest = bearishSweep
-    && bearishOrderBlock
-    && last.c <= bearishOrderBlock.mid
-    && last.h >= bearishOrderBlock.low * 0.995;
-
-  if (bullishRetest) {
+  const recent = candles.slice(-40);
+  const chartPatterns = classifyChartPatterns(findChartPatterns(recent, false));
+  
+  if (chartPatterns.bullish.length > 0) {
     return {
       action: 'BUY',
-      pattern: `Liquidity sweep + bullish order-block retest | Resistance ${priorSwingHigh.toFixed(2)} | OB ${bullishOrderBlock.low.toFixed(2)}-${bullishOrderBlock.high.toFixed(2)}`,
-      reason: 'Price swept above prior resistance, then re-entered a bearish order block with bullish trend alignment and retest confirmation.',
+      pattern: `Chart Pattern: ${chartPatterns.bullish.join(', ')}`,
+      reason: `Bullish chart patterns detected: ${chartPatterns.bullish.join(', ')}`,
+    };
+  }
+  
+  if (chartPatterns.bearish.length > 0) {
+    return {
+      action: 'SELL',
+      pattern: `Chart Pattern: ${chartPatterns.bearish.join(', ')}`,
+      reason: `Bearish chart patterns detected: ${chartPatterns.bearish.join(', ')}`,
+    };
+  }
+  
+  return {
+    action: 'HOLD',
+    pattern: 'No chart patterns detected',
+    reason: 'Waiting for chart patterns',
+  };
+}
+
+function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = [], threeMinuteCandles = []) {
+  // 1-MINUTE: ONLY 8 BREAKOUT PATTERNS WITH PATTERN-BASED ENTRY & STOP
+  if (candles.length < 30) {
+    return {
+      action: 'HOLD',
+      pattern: 'Insufficient data',
+      reason: 'Need at least 30 one-minute candles',
     };
   }
 
-  if (bearishRetest) {
+  const patterns = detectOneMinuteBreakoutPatterns(candles);
+
+  if (patterns.bullish.length > 0) {
+    const patternName = patterns.bullish[0];
+    const levels = patterns.breakoutLevels[patternName];
+    return {
+      action: 'BUY',
+      pattern: `Breakout: ${patternName}`,
+      reason: `${patternName} detected. Entry above ${levels.entry.toFixed(2)}, Stop below ${levels.stopLoss.toFixed(2)}`,
+      isOneMinuteTrade: true,
+      chartPatterns: [patternName],
+      breakoutLevels: levels, // Store for trade levels calculation
+    };
+  }
+
+  if (patterns.bearish.length > 0) {
+    const patternName = patterns.bearish[0];
+    const levels = patterns.breakoutLevels[patternName];
     return {
       action: 'SELL',
-      pattern: `Liquidity sweep + bearish order-block retest | Support ${priorSwingLow.toFixed(2)} | OB ${bearishOrderBlock.low.toFixed(2)}-${bearishOrderBlock.high.toFixed(2)}`,
-      reason: 'Price swept below prior support, then re-entered a bullish order block with bearish trend alignment and retest confirmation.',
+      pattern: `Breakout: ${patternName}`,
+      reason: `${patternName} detected. Entry below ${levels.entry.toFixed(2)}, Stop above ${levels.stopLoss.toFixed(2)}`,
+      isOneMinuteTrade: true,
+      chartPatterns: [patternName],
+      breakoutLevels: levels, // Store for trade levels calculation
     };
   }
 
   return {
     action: 'HOLD',
-    pattern: 'No valid sweep and retest confirmation',
-    reason: 'The market has not yet produced a clean sweep, retest into the order block, and invalidation confirmation required for an institutional entry.',
-  };
-}
-
-function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = [], threeMinuteCandles = []) {
-  // Institutional 1-minute approach: Focus on price action, liquidity sweeps, and support/resistance
-  if (candles.length < 40) {
-    return {
-      action: 'HOLD',
-      pattern: 'Insufficient data',
-      reason: 'Need at least 40 one-minute candles for institutional analysis.',
-    };
-  }
-
-  const institutionalSignal = calculateInstitutionalTradeSignal(candles);
-  const window = candles.slice(-40);
-  const candlestickPatterns = detectCandlestickPatterns(window, window.length - 1);
-  const chartPatterns = classifyChartPatterns(findChartPatterns(window, true)); // 1-minute: tighter tolerance
-  const oneMinutePatterns = detectOneMinutePatterns(window); // High-probability 1-min scalp patterns
-
-  const lastClose = window.at(-1).c;
-  const minuteConfirmation = {
-    candlestick: `Bullish: ${candlestickPatterns.bullish.join(', ') || 'none'}; bearish: ${candlestickPatterns.bearish.join(', ') || 'none'}`,
-    chart: `1m bullish: ${chartPatterns.bullish.join(', ') || 'none'}; bearish: ${chartPatterns.bearish.join(', ') || 'none'}`,
-    oneMinuteScalp: `1m scalp bullish: ${oneMinutePatterns.bullish.join(', ') || 'none'}; bearish: ${oneMinutePatterns.bearish.join(', ') || 'none'}`,
-  };
-
-  // Institutional 1-minute entry: Liquidity sweep + retest (from institutional signal) with 1m pattern confirmation
-  if (!['BUY', 'SELL'].includes(institutionalSignal.action)) {
-    return {
-      action: 'HOLD',
-      pattern: 'No institutional setup',
-      reason: 'Waiting for liquidity sweep and order-block retest at the 1-minute level.',
-      minuteConfirmation,
-    };
-  }
-
-  const isBuy = institutionalSignal.action === 'BUY';
-  const alignedCandlestick = isBuy ? candlestickPatterns.bullish : candlestickPatterns.bearish;
-  const alignedOneMinuteChart = isBuy ? chartPatterns.bullish : chartPatterns.bearish;
-  const alignedOneMinuteScalp = isBuy ? oneMinutePatterns.bullish : oneMinutePatterns.bearish;
-  
-  const hasOneMinuteConfirmation = alignedCandlestick.length > 0 || alignedOneMinuteChart.length > 0 || alignedOneMinuteScalp.length > 0;
-  
-  if (!hasOneMinuteConfirmation) {
-    return {
-      action: 'HOLD',
-      pattern: 'Institutional setup but 1m confirmation missing',
-      reason: 'Waiting for candlestick pattern, chart structure, or scalp pattern confirmation at the 1-minute level.',
-      minuteConfirmation,
-    };
-  }
-
-  return {
-    ...institutionalSignal,
-    pattern: `${institutionalSignal.pattern} | Confirmation: Candle ${alignedCandlestick.join(', ') || 'none'} | 1m ${alignedOneMinuteChart.join(', ') || 'none'} | Scalp ${alignedOneMinuteScalp.join(', ') || 'none'}`,
-    reason: `${institutionalSignal.reason} One-minute price action confirms the institutional setup.`,
-    minuteConfirmation,
+    pattern: 'No breakout patterns detected',
+    reason: 'Waiting for one of 8 breakout patterns',
     isOneMinuteTrade: true,
   };
 }
@@ -491,61 +586,70 @@ function calculateTradeLevels(candles, signal, oneMinuteMode = false) {
       : { entry, target: Math.min(recentLow, entry - fallbackRisk * 2), stopLoss: recentHigh + fallbackRisk };
   }
 
-  // INSTITUTIONAL 1-MINUTE TRADING: Tight stops, precise risk/reward
-  const recentWindow = candles.slice(-20);
-  const recentLow = Math.min(...recentWindow.map(candle => candle.l));
-  const recentHigh = Math.max(...recentWindow.map(candle => candle.h));
-  const averageRange = recentWindow.reduce((sum, candle) => sum + (candle.h - candle.l), 0) / recentWindow.length;
-
-  // Find order blocks: Recent highs and lows that held (swing points)
-  const structure = candles.slice(-40);
-  const recentHighs = structure.filter((candle, index) => 
-    index > 0 && index < structure.length - 1 &&
-    candle.h >= structure[index - 1].h && candle.h >= structure[index + 1].h
-  );
-  const recentLows = structure.filter((candle, index) => 
-    index > 0 && index < structure.length - 1 &&
-    candle.l <= structure[index - 1].l && candle.l <= structure[index + 1].l
-  );
-
-  // Institutional approach: Place stop at recent swing point with minimal buffer
-  const minBuffer = Math.max(averageRange * 0.15, 0.25); // Tight 15% of avg range
-
-  if (signal.action === 'BUY') {
-    // Stop at most recent swing low (order block low)
-    const lastSwingLow = recentLows.at(-1)?.l ?? recentLow;
-    const stopLoss = lastSwingLow - minBuffer; // Tight stop just below swing low
-    const risk = entry - stopLoss;
+  // 1-MINUTE: USE PATTERN-BASED BREAKOUT LEVELS
+  if (signal.breakoutLevels) {
+    const { entry: patternEntry, stopLoss: patternStop, type } = signal.breakoutLevels;
     
-    // Target: 1:2 risk/reward (institutional standard)
-    const target = entry + (risk * 2);
+    if (signal.action === 'BUY') {
+      const risk = patternEntry - patternStop;
+      // Target: 2x risk from entry (institutional 1:2 ratio)
+      const target = patternEntry + (risk * 2);
+      return {
+        entry: patternEntry, // Pattern breakout level
+        target,
+        stopLoss: patternStop, // Pattern stop level
+        risk,
+        rewardRatio: 2,
+        levelSource: `Breakout Pattern: ${signal.chartPatterns[0]}`,
+      };
+    } else {
+      // SELL
+      const risk = patternStop - patternEntry;
+      const target = patternEntry - (risk * 2);
+      return {
+        entry: patternEntry,
+        target: Math.max(target, 0.05), // Ensure positive target
+        stopLoss: patternStop,
+        risk,
+        rewardRatio: 2,
+        levelSource: `Breakout Pattern: ${signal.chartPatterns[0]}`,
+      };
+    }
+  }
+
+  // Fallback: Window-based levels (should not reach here for 1-min with breakout patterns)
+  const window = candles.slice(-40);
+  const windowHigh = Math.max(...window.map(c => c.h));
+  const windowLow = Math.min(...window.map(c => c.l));
+  
+  if (signal.action === 'BUY') {
+    const stopLoss = windowLow;
+    const target = windowHigh;
+    const risk = entry - stopLoss;
     
     return {
       entry,
       target,
       stopLoss,
       risk,
-      rewardRatio: 2,
-      levelSource: 'Institutional 1m: swing low stop, 1:2 risk/reward',
+      rewardRatio: risk > 0 ? (target - entry) / risk : 0,
+      levelSource: 'Chart Pattern: BUY stop at pattern low, target at pattern high',
+    };
+  } else {
+    // SELL
+    const stopLoss = windowHigh;
+    const target = windowLow;
+    const risk = stopLoss - entry;
+    
+    return {
+      entry,
+      target,
+      stopLoss,
+      risk,
+      rewardRatio: risk > 0 ? (entry - target) / risk : 0,
+      levelSource: 'Chart Pattern: SELL stop at pattern high, target at pattern low',
     };
   }
-
-  // SELL
-  const lastSwingHigh = recentHighs.at(-1)?.h ?? recentHigh;
-  const stopLoss = lastSwingHigh + minBuffer; // Tight stop just above swing high
-  const risk = stopLoss - entry;
-  
-  // Target: 1:2 risk/reward
-  const target = Math.max(0.05, entry - (risk * 2));
-  
-  return {
-    entry,
-    target,
-    stopLoss,
-    risk,
-    rewardRatio: 2,
-    levelSource: 'Institutional 1m: swing high stop, 1:2 risk/reward',
-  };
 }
 
 function calculateCurrentTradePlan(candles, signal) {
@@ -727,6 +831,7 @@ function PCRAnalysis({ apiKey }) {
   const [submittedAutoSignalKey, setSubmittedAutoSignalKey] = useState('');
   const [signalRows, setSignalRows] = useState([]);
   const [signalFilter, setSignalFilter] = useState('ALL');
+  const [dayFilter, setDayFilter] = useState('ALL'); // NEW: Day-wise filter
   const candleChartRef = React.useRef(null);
   const chartSeriesRef = React.useRef(null);
   const ema10SeriesRef = React.useRef(null);
@@ -892,6 +997,13 @@ function PCRAnalysis({ apiKey }) {
       setSelectedStrike(nearest);
     }
   }, [strikeOptions, selectedInstrument, selectedExpiry, nifty50Data]);
+
+  // Reset day filter if current selection is no longer available
+  useEffect(() => {
+    if (signalRows.length === 0 && dayFilter !== 'ALL') {
+      setDayFilter('ALL');
+    }
+  }, [signalRows, dayFilter]);
 
   const fetchRealPCR = async (strike) => {
     if (!strike?.instrumentToken) return;
@@ -1270,9 +1382,23 @@ function PCRAnalysis({ apiKey }) {
   const expiryOptions = strikeOptions.filter(option => option.instrument === selectedInstrument)
     .map(option => option.expiry).filter((expiry, index, values) => values.indexOf(expiry) === index).sort();
   const visibleStrikeOptions = strikeOptions.filter(option => option.instrument === selectedInstrument && option.expiry === selectedExpiry);
-  const filteredSignalRows = signalFilter === 'ALL'
-    ? signalRows
-    : signalRows.filter(signal => signal.action === signalFilter);
+  
+  // Get unique days from signal rows
+  const uniqueDays = [...new Set(signalRows.map(signal => {
+    const date = new Date(signal.time);
+    return date.toLocaleDateString('en-IN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+  }))].sort().reverse();
+  
+  // Filter by action and day
+  const filteredSignalRows = signalRows.filter(signal => {
+    const actionMatch = signalFilter === 'ALL' || signal.action === signalFilter;
+    if (!actionMatch) return false;
+    
+    if (dayFilter === 'ALL') return true;
+    const signalDate = new Date(signal.time).toLocaleDateString('en-IN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+    return signalDate === dayFilter;
+  });
+  
   const evaluatedSignals = filteredSignalRows.filter(signal => signal.outcome === 'True' || signal.outcome === 'False');
   const successfulSignals = evaluatedSignals.filter(signal => signal.outcome === 'True');
   const overallSuccess = evaluatedSignals.length > 0
@@ -1557,6 +1683,15 @@ function PCRAnalysis({ apiKey }) {
                     <option value="SELL">Sell only</option>
                   </select>
                 </label>
+                <label>
+                  Day:
+                  <select value={dayFilter} onChange={(event) => setDayFilter(event.target.value)}>
+                    <option value="ALL">All Days</option>
+                    {uniqueDays.map(day => (
+                      <option key={day} value={day}>{day}</option>
+                    ))}
+                  </select>
+                </label>
                 <button type="button" className="download-signals-btn" onClick={downloadSignalsJson} disabled={filteredSignalRows.length === 0}>Download JSON</button>
               </div>
               <div className="signal-summary">
@@ -1573,7 +1708,7 @@ function PCRAnalysis({ apiKey }) {
               </div>
             )}
             {filteredSignalRows.length === 0 ? (
-              <div className="signal-table-empty">No {signalFilter === 'ALL' ? 'combined BUY/SELL confirmation' : `${signalFilter.toLowerCase()} signal`} in this range.</div>
+              <div className="signal-table-empty">No {signalFilter === 'ALL' ? 'combined BUY/SELL confirmation' : `${signalFilter.toLowerCase()} signal`} {dayFilter !== 'ALL' ? `for ${dayFilter}` : 'in this range'}.</div>
             ) : (
               <div className="signal-table-scroll">
                 <table className="signal-table">
