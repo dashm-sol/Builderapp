@@ -61,7 +61,8 @@ class KiteAPI {
 
       const instruments = Array.isArray(response.data) ? response.data : [];
       const now = new Date();
-      const earliestExpiry = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+      const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const nextMonthEnd = new Date(now.getFullYear(), now.getMonth() + 2, 0);
       const valid = instruments.filter((instrument) => {
         const tradingsymbol = String(instrument.tradingsymbol || '').toUpperCase();
         const name = String(instrument.name || '').toUpperCase();
@@ -76,14 +77,15 @@ class KiteAPI {
           && Number.isFinite(strike)
           && expiryDate
           && !Number.isNaN(expiryDate.getTime())
-          && expiryDate >= earliestExpiry
-          && expiryDate <= now
+          && expiryDate >= currentMonthStart
+          && expiryDate <= nextMonthEnd
           && (name.includes('NIFTY') || tradingsymbol.includes('NIFTY'));
       });
 
       return valid
         .map((item) => ({
           strike: Number(item.strike),
+          instrument: String(item.name || '').toUpperCase(),
           instrumentToken: item.instrument_token,
           tradingsymbol: item.tradingsymbol,
           type: String(item.instrument_type || '').toUpperCase(),

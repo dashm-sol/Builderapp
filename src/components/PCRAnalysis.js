@@ -310,18 +310,19 @@ function calculateInstitutionalTradeSignal(candles) {
   };
 }
 
-function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = []) {
+function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = [], threeMinuteCandles = []) {
   let institutionalSignal = calculateInstitutionalTradeSignal(candles);
-  if (candles.length < 40 || fiveMinuteCandles.length < 20) {
+  if (candles.length < 40 || fiveMinuteCandles.length < 20 || threeMinuteCandles.length < 20) {
     return {
       ...institutionalSignal,
-      minuteConfirmation: { status: 'Need at least 40 one-minute and 20 five-minute candles for multi-timeframe confirmation.' },
+      minuteConfirmation: { status: 'Need 1m, 3m, and 5m candles for multi-timeframe confirmation.' },
     };
   }
 
   const window = candles.slice(-40);
   const candlestickPatterns = detectCandlestickPatterns(window, window.length - 1);
   const chartPatterns = classifyChartPatterns(findChartPatterns(window));
+  const threeMinuteChartPatterns = classifyChartPatterns(findChartPatterns(threeMinuteCandles.slice(-40)));
   const fiveMinuteWindow = fiveMinuteCandles.slice(-40);
   const fiveMinuteChartPatterns = classifyChartPatterns(findChartPatterns(fiveMinuteWindow));
   const fiveMinutePivotHighs = fiveMinuteWindow.filter((candle, index) => index > 0 && index < fiveMinuteWindow.length - 1
@@ -353,6 +354,7 @@ function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = []) {
   const minuteConfirmation = {
     candlestick: `Bullish: ${candlestickPatterns.bullish.join(', ') || 'none'}; bearish: ${candlestickPatterns.bearish.join(', ') || 'none'}`,
     chart: `1m bullish: ${chartPatterns.bullish.join(', ') || 'none'}; bearish: ${chartPatterns.bearish.join(', ') || 'none'}`,
+    threeMinuteChart: `3m bullish: ${threeMinuteChartPatterns.bullish.join(', ') || 'none'}; bearish: ${threeMinuteChartPatterns.bearish.join(', ') || 'none'}`,
     fiveMinuteChart: `5m bullish: ${fiveMinuteChartPatterns.bullish.join(', ') || 'none'}; bearish: ${fiveMinuteChartPatterns.bearish.join(', ') || 'none'}`,
     ema: `EMA10 ₹${ema10.toFixed(2)} | EMA20 ₹${ema20.toFixed(2)} | Close ₹${lastClose.toFixed(2)}`,
     emaStatus,
@@ -390,8 +392,10 @@ function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = []) {
   const isBuy = institutionalSignal.action === 'BUY';
   const alignedCandlestick = isBuy ? candlestickPatterns.bullish : candlestickPatterns.bearish;
   const alignedOneMinuteChart = isBuy ? chartPatterns.bullish : chartPatterns.bearish;
+  const alignedThreeMinuteChart = isBuy ? threeMinuteChartPatterns.bullish : threeMinuteChartPatterns.bearish;
   const alignedFiveMinuteChart = isBuy ? fiveMinuteChartPatterns.bullish : fiveMinuteChartPatterns.bearish;
   const conflictingOneMinuteChart = isBuy ? chartPatterns.bearish : chartPatterns.bullish;
+  const conflictingThreeMinuteChart = isBuy ? threeMinuteChartPatterns.bearish : threeMinuteChartPatterns.bullish;
   const conflictingFiveMinuteChart = isBuy ? fiveMinuteChartPatterns.bearish : fiveMinuteChartPatterns.bullish;
   const emaAligned = isBuy
     ? ema10 > ema20 && lastClose > ema10
@@ -399,19 +403,20 @@ function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = []) {
 
   const hasOneMinuteConfirmation = alignedCandlestick.length > 0 || alignedOneMinuteChart.length > 0;
   const unresolvedOneMinuteConflict = conflictingOneMinuteChart.length > 0 && alignedOneMinuteChart.length === 0;
+  const unresolvedThreeMinuteConflict = conflictingThreeMinuteChart.length > 0 && alignedThreeMinuteChart.length === 0;
   const unresolvedFiveMinuteConflict = conflictingFiveMinuteChart.length > 0 && alignedFiveMinuteChart.length === 0;
-  if (!hasOneMinuteConfirmation || unresolvedOneMinuteConflict || unresolvedFiveMinuteConflict || !emaAligned) {
+  if (!hasOneMinuteConfirmation || alignedThreeMinuteChart.length === 0 || unresolvedOneMinuteConflict || unresolvedThreeMinuteConflict || unresolvedFiveMinuteConflict || !emaAligned) {
     return {
       action: 'HOLD',
       pattern: 'One-minute confirmation incomplete',
-      reason: 'Requires an institutional or momentum continuation setup, an aligned one-minute candlestick or chart pattern, no unresolved opposite one-minute or five-minute structure, and EMA 10/20 alignment.',
+      reason: 'Requires aligned 1m and 3m chart patterns, five-minute premium direction, and EMA 10/20 alignment.',
       minuteConfirmation,
     };
   }
 
   return {
     ...institutionalSignal,
-    pattern: `${institutionalSignal.pattern} | Candle ${alignedCandlestick.join(', ') || 'none'} | 1m Chart ${alignedOneMinuteChart.join(', ') || 'none'} | 5m Chart filter clear | EMA10 ${ema10.toFixed(2)} ${isBuy ? '>' : '<'} EMA20 ${ema20.toFixed(2)}`,
+    pattern: `${institutionalSignal.pattern} | Candle ${alignedCandlestick.join(', ') || 'none'} | 1m Chart ${alignedOneMinuteChart.join(', ') || 'none'} | 3m Chart ${alignedThreeMinuteChart.join(', ')} | 5m Chart filter clear | EMA10 ${ema10.toFixed(2)} ${isBuy ? '>' : '<'} EMA20 ${ema20.toFixed(2)}`,
     reason: `${institutionalSignal.reason} One-minute candlestick or chart structure confirms the five-minute premium chart direction with EMA 10/20 alignment.`,
     minuteConfirmation,
     premiumSupport: fiveMinutePivotLows.filter(pivot => pivot.l < lastClose).at(-1)?.l,
@@ -424,8 +429,8 @@ function isBeforeThreePmIst(timestamp) {
   return indiaTime.getHours() * 60 + indiaTime.getMinutes() < 15 * 60;
 }
 
-function calculateTradeSignal(candles, oneMinuteMode = false, fiveMinuteCandles = []) {
-  const signal = oneMinuteMode ? calculateOneMinuteTradeSignal(candles, fiveMinuteCandles) : calculateInstitutionalTradeSignal(candles);
+function calculateTradeSignal(candles, oneMinuteMode = false, fiveMinuteCandles = [], threeMinuteCandles = []) {
+  const signal = oneMinuteMode ? calculateOneMinuteTradeSignal(candles, fiveMinuteCandles, threeMinuteCandles) : calculateInstitutionalTradeSignal(candles);
   if (['BUY', 'SELL'].includes(signal.action) && !isBeforeThreePmIst(candles.at(-1)?.x)) {
     return {
       action: 'HOLD',
@@ -459,20 +464,20 @@ function calculateTradeLevels(candles, signal, oneMinuteMode = false) {
   const buffer = Math.max(averageRange * 0.35, 0.5);
 
   if (signal.action === 'BUY') {
-    const patternSupport = signal.premiumSupport ?? pivotLows.at(-1)?.l ?? recentLow;
+    const patternSupport = pivotLows.at(-1)?.l ?? recentLow;
     const stopLoss = patternSupport - buffer;
     const risk = entry - stopLoss;
     const premiumTarget = signal.premiumResistance ?? pivotHighs.find(pivot => pivot.h > entry)?.h ?? recentHigh;
     const target = premiumTarget > entry ? premiumTarget : entry + risk * 1.5;
-    return { entry, target, stopLoss, levelSource: signal.premiumSupport ? '5m premium support/resistance with 1m entry' : '1m pattern support and measured move' };
+    return { entry, target, stopLoss, levelSource: '1m swing stop with 5m premium target' };
   }
 
-  const patternResistance = signal.premiumResistance ?? pivotHighs.at(-1)?.h ?? recentHigh;
+  const patternResistance = pivotHighs.at(-1)?.h ?? recentHigh;
   const stopLoss = patternResistance + buffer;
   const risk = stopLoss - entry;
   const premiumTarget = signal.premiumSupport ?? [...pivotLows].reverse().find(pivot => pivot.l < entry)?.l ?? recentLow;
   const target = Math.max(0.05, premiumTarget < entry ? premiumTarget : entry - risk * 1.5);
-  return { entry, target, stopLoss, levelSource: signal.premiumResistance ? '5m premium support/resistance with 1m entry' : '1m pattern resistance and measured move' };
+  return { entry, target, stopLoss, levelSource: '1m swing stop with 5m premium target' };
 }
 
 function calculateCurrentTradePlan(candles, signal) {
@@ -480,8 +485,16 @@ function calculateCurrentTradePlan(candles, signal) {
   return { ...signal, time: candles.at(-1).x, ...calculateTradeLevels(candles, signal, Boolean(signal.minuteConfirmation)) };
 }
 
-function evaluateSignalWithFutureCandles(signal, future, target, stopLoss) {
+function evaluateSignalWithFutureCandles(signal, future, target, stopLoss, sessionCloseCandle = null) {
   if (future.length === 0) {
+    if (sessionCloseCandle) {
+      return {
+        outcome: 'Session Exit',
+        exitPrice: sessionCloseCandle.c,
+        closedAt: sessionCloseCandle.x,
+        evaluation: `Same-day session exit at ₹${sessionCloseCandle.c.toFixed(2)}; position was not carried overnight`,
+      };
+    }
     return { outcome: 'Pending', evaluation: 'Waiting for the next candle high/low' };
   }
 
@@ -517,10 +530,23 @@ function evaluateSignalWithFutureCandles(signal, future, target, stopLoss) {
       };
     }
   }
+  if (sessionCloseCandle) {
+    return {
+      outcome: 'Session Exit',
+      exitPrice: sessionCloseCandle.c,
+      closedAt: sessionCloseCandle.x,
+      evaluation: `Same-day session exit at ₹${sessionCloseCandle.c.toFixed(2)}; position was not carried overnight`,
+    };
+  }
   return {
     outcome: 'Pending',
     evaluation: `Checked ${future.length} future candle${future.length === 1 ? '' : 's'}; target/stop not touched yet`,
   };
+}
+
+function getTradingDayKey(timestamp) {
+  const date = new Date(timestamp);
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
 }
 
 function getStrategyReview(signalRows) {
@@ -555,7 +581,7 @@ function calculateTradeCost(entry, lotSize) {
   };
 }
 
-function buildSignalRows(candles, oneMinuteMode = false, fiveMinuteCandles = []) {
+function buildSignalRows(candles, oneMinuteMode = false, fiveMinuteCandles = [], threeMinuteCandles = []) {
   let activeTradeUntil = 0;
   return candles
     .map((_, index) => {
@@ -564,7 +590,8 @@ function buildSignalRows(candles, oneMinuteMode = false, fiveMinuteCandles = [])
       if (!isBeforeThreePmIst(candles[index].x)) return null;
       const window = candles.slice(0, index + 1).slice(-40);
       const fiveMinuteWindow = fiveMinuteCandles.filter(candle => candle.x <= candles[index].x).slice(-40);
-      const signal = calculateTradeSignal(window, oneMinuteMode, fiveMinuteWindow);
+      const threeMinuteWindow = threeMinuteCandles.filter(candle => candle.x <= candles[index].x).slice(-40);
+      const signal = calculateTradeSignal(window, oneMinuteMode, fiveMinuteWindow, threeMinuteWindow);
       if (signal.action === 'HOLD') return null;
 
       const signalCandle = candles[index];
@@ -572,8 +599,12 @@ function buildSignalRows(candles, oneMinuteMode = false, fiveMinuteCandles = [])
       const { entry, target, stopLoss } = levels;
 
       if (signal.action === 'BUY') {
-        const future = candles.slice(index + 1);
-        const result = evaluateSignalWithFutureCandles(signal, future, target, stopLoss);
+        const allFutureCandles = candles.slice(index + 1);
+        const future = oneMinuteMode
+          ? allFutureCandles.filter(candle => getTradingDayKey(candle.x) === getTradingDayKey(signalCandle.x))
+          : allFutureCandles;
+        const sessionEnded = oneMinuteMode && allFutureCandles.some(candle => getTradingDayKey(candle.x) !== getTradingDayKey(signalCandle.x));
+        const result = evaluateSignalWithFutureCandles(signal, future, target, stopLoss, sessionEnded ? future.at(-1) || signalCandle : null);
         activeTradeUntil = result.closedAt || Number.MAX_SAFE_INTEGER;
         return {
           ...signal,
@@ -586,8 +617,12 @@ function buildSignalRows(candles, oneMinuteMode = false, fiveMinuteCandles = [])
         };
       }
 
-      const future = candles.slice(index + 1);
-      const result = evaluateSignalWithFutureCandles(signal, future, target, stopLoss);
+      const allFutureCandles = candles.slice(index + 1);
+      const future = oneMinuteMode
+        ? allFutureCandles.filter(candle => getTradingDayKey(candle.x) === getTradingDayKey(signalCandle.x))
+        : allFutureCandles;
+      const sessionEnded = oneMinuteMode && allFutureCandles.some(candle => getTradingDayKey(candle.x) !== getTradingDayKey(signalCandle.x));
+      const result = evaluateSignalWithFutureCandles(signal, future, target, stopLoss, sessionEnded ? future.at(-1) || signalCandle : null);
       activeTradeUntil = result.closedAt || Number.MAX_SAFE_INTEGER;
       return {
         ...signal,
@@ -607,6 +642,8 @@ function PCRAnalysis({ apiKey }) {
   const [pcrData, setPcrData] = useState(null);
   const [nifty50Data, setNifty50Data] = useState(null);
   const [strikeOptions, setStrikeOptions] = useState([]);
+  const [selectedInstrument, setSelectedInstrument] = useState('NIFTY');
+  const [selectedExpiry, setSelectedExpiry] = useState('');
   const [selectedStrike, setSelectedStrike] = useState(null);
   const [selectedInterval, setSelectedInterval] = useState('5minute');
   const [candleData, setCandleData] = useState([]);
@@ -639,10 +676,35 @@ function PCRAnalysis({ apiKey }) {
     const refreshInterval = setInterval(() => {
       fetchHistoricalChart(selectedStrike, selectedInterval);
       fetchRealPCR(selectedStrike);
-    }, 50000);
+    }, 5000000);
 
     return () => clearInterval(refreshInterval);
   }, [selectedStrike, selectedInterval]);
+
+  useEffect(() => {
+    const availableExpiries = strikeOptions
+      .filter(option => option.instrument === selectedInstrument)
+      .map(option => option.expiry)
+      .filter((expiry, index, values) => values.indexOf(expiry) === index)
+      .sort();
+    const nextExpiry = availableExpiries.includes(selectedExpiry) ? selectedExpiry : availableExpiries[0] || '';
+    setSelectedExpiry(nextExpiry);
+  }, [strikeOptions, selectedInstrument]);
+
+  useEffect(() => {
+    const availableStrikes = strikeOptions.filter(option => option.instrument === selectedInstrument && option.expiry === selectedExpiry);
+    if (availableStrikes.length === 0) {
+      setSelectedStrike(null);
+      return;
+    }
+    if (!availableStrikes.some(option => option.instrumentToken === selectedStrike?.instrumentToken)) {
+      const nearest = availableStrikes.reduce((best, current) => {
+        const referencePrice = Number(nifty50Data?.last_price || 0);
+        return Math.abs(current.strike - referencePrice) < Math.abs(best.strike - referencePrice) ? current : best;
+      }, availableStrikes[0]);
+      setSelectedStrike(nearest);
+    }
+  }, [strikeOptions, selectedInstrument, selectedExpiry, nifty50Data]);
 
   const fetchRealPCR = async (strike) => {
     if (!strike?.instrumentToken) return;
@@ -740,15 +802,25 @@ function PCRAnalysis({ apiKey }) {
       const decisionCandleData = candleData;
       const oneMinuteMode = interval === 'minute';
       let fiveMinuteCandleData = [];
+      let threeMinuteCandleData = [];
 
       if (oneMinuteMode) {
-        const fiveMinuteCandles = await kiteAPI.getHistoricalData({
-          instrumentToken: strike.instrumentToken,
-          interval: '5minute',
-          from: formatDateTime(from, '09:15:00'),
-          to: formatDateTime(to, '23:59:59'),
-        });
+        const [fiveMinuteCandles, threeMinuteCandles] = await Promise.all([
+          kiteAPI.getHistoricalData({
+            instrumentToken: strike.instrumentToken,
+            interval: '5minute',
+            from: formatDateTime(from, '09:15:00'),
+            to: formatDateTime(to, '23:59:59'),
+          }),
+          kiteAPI.getHistoricalData({
+            instrumentToken: strike.instrumentToken,
+            interval: '3minute',
+            from: formatDateTime(from, '09:15:00'),
+            to: formatDateTime(to, '23:59:59'),
+          }),
+        ]);
         fiveMinuteCandleData = toCandleData(Array.isArray(fiveMinuteCandles) ? fiveMinuteCandles : []);
+        threeMinuteCandleData = toCandleData(Array.isArray(threeMinuteCandles) ? threeMinuteCandles : []);
       }
 
       const latest = normalized[normalized.length - 1];
@@ -758,11 +830,11 @@ function PCRAnalysis({ apiKey }) {
           : latest || null
       );
 
-        const currentSignal = calculateTradeSignal(decisionCandleData, oneMinuteMode, fiveMinuteCandleData);
+        const currentSignal = calculateTradeSignal(decisionCandleData, oneMinuteMode, fiveMinuteCandleData, threeMinuteCandleData);
         setCandleData(candleData);
         setTradeSignal(currentSignal);
         setAutoTradePlan(calculateCurrentTradePlan(decisionCandleData, currentSignal));
-        setSignalRows(buildSignalRows(decisionCandleData, oneMinuteMode, fiveMinuteCandleData));
+        setSignalRows(buildSignalRows(decisionCandleData, oneMinuteMode, fiveMinuteCandleData, threeMinuteCandleData));
       setCloseChartData({
         datasets: [{
           label: `${strike.label} close • ${interval}`,
@@ -879,6 +951,15 @@ function PCRAnalysis({ apiKey }) {
         borderColor: '#cbd5e1',
         timeVisible: selectedInterval !== 'day',
         secondsVisible: false,
+        tickMarkFormatter: (time) => {
+          const timestamp = typeof time === 'number' ? time * 1000 : Date.UTC(time.year, time.month - 1, time.day);
+          return new Intl.DateTimeFormat('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true,
+          }).format(timestamp);
+        },
       },
     });
     const series = chart.addSeries(CandlestickSeries, {
@@ -947,15 +1028,8 @@ function PCRAnalysis({ apiKey }) {
 
       const strikes = await kiteAPI.getNiftyStrikeOptions();
       setStrikeOptions(strikes);
-      if (strikes.length > 0) {
-        const niftyQuote = Number(niftyIndex.last_price || 0);
-        const nearest = strikes.reduce((best, current) => {
-          const diffCurrent = Math.abs(current.strike - niftyQuote);
-          const diffBest = Math.abs(best.strike - niftyQuote);
-          return diffCurrent < diffBest ? current : best;
-        }, strikes[0]);
-        setSelectedStrike(nearest);
-      }
+      const instruments = strikes.map(option => option.instrument).filter((instrument, index, values) => values.indexOf(instrument) === index);
+      if (!instruments.includes(selectedInstrument)) setSelectedInstrument(instruments.includes('NIFTY') ? 'NIFTY' : instruments[0] || '');
     } catch (err) {
       setError(err.message);
       console.error('Error:', err);
@@ -995,6 +1069,10 @@ function PCRAnalysis({ apiKey }) {
 
   const pcrVolume = pcrData?.pcr_volume || 0;
   const pcrOI = pcrData?.pcr_oi || 0;
+  const instrumentOptions = strikeOptions.map(option => option.instrument).filter((instrument, index, values) => values.indexOf(instrument) === index).sort();
+  const expiryOptions = strikeOptions.filter(option => option.instrument === selectedInstrument)
+    .map(option => option.expiry).filter((expiry, index, values) => values.indexOf(expiry) === index).sort();
+  const visibleStrikeOptions = strikeOptions.filter(option => option.instrument === selectedInstrument && option.expiry === selectedExpiry);
   const filteredSignalRows = signalFilter === 'ALL'
     ? signalRows
     : signalRows.filter(signal => signal.action === signalFilter);
@@ -1113,6 +1191,20 @@ function PCRAnalysis({ apiKey }) {
           </div>
           <div className="chart-controls">
             <label>
+              Instrument
+              <select value={selectedInstrument} onChange={(event) => setSelectedInstrument(event.target.value)} disabled={instrumentOptions.length === 0}>
+                {instrumentOptions.map(instrument => <option key={instrument} value={instrument}>{instrument}</option>)}
+              </select>
+            </label>
+
+            <label>
+              Expiry
+              <select value={selectedExpiry} onChange={(event) => setSelectedExpiry(event.target.value)} disabled={expiryOptions.length === 0}>
+                {expiryOptions.map(expiry => <option key={expiry} value={expiry}>{expiry}</option>)}
+              </select>
+            </label>
+
+            <label>
               Strike
               <select
                 value={selectedStrike ? selectedStrike.instrumentToken : ''}
@@ -1120,9 +1212,9 @@ function PCRAnalysis({ apiKey }) {
                   const match = strikeOptions.find(option => String(option.instrumentToken) === event.target.value);
                   setSelectedStrike(match || null);
                 }}
-                disabled={strikeOptions.length === 0}
+                disabled={visibleStrikeOptions.length === 0}
               >
-                {strikeOptions.length === 0 ? <option value="">Loading strikes...</option> : strikeOptions.map((option) => (
+                {visibleStrikeOptions.length === 0 ? <option value="">Loading strikes...</option> : visibleStrikeOptions.map((option) => (
                   <option key={option.instrumentToken} value={option.instrumentToken}>
                     {option.label}
                   </option>
@@ -1162,6 +1254,7 @@ function PCRAnalysis({ apiKey }) {
                 <div className="minute-confirmation">
                   <span>{tradeSignal.minuteConfirmation.candlestick}</span>
                   <span>{tradeSignal.minuteConfirmation.chart}</span>
+                  <span>{tradeSignal.minuteConfirmation.threeMinuteChart}</span>
                   <span>{tradeSignal.minuteConfirmation.fiveMinuteChart}</span>
                   <span>{tradeSignal.minuteConfirmation.ema}</span>
                   <span>{tradeSignal.minuteConfirmation.emaStatus || tradeSignal.minuteConfirmation.status}</span>
@@ -1295,6 +1388,7 @@ function PCRAnalysis({ apiKey }) {
                       <th>Candlestick</th>
                       <th>Chart pattern</th>
                       {selectedInterval === 'minute' && <th>1m Chart Structure</th>}
+                      {selectedInterval === 'minute' && <th>3m Chart Structure</th>}
                       {selectedInterval === 'minute' && <th>5m Chart Structure</th>}
                       {selectedInterval === 'minute' && <th>1m EMA 10/20</th>}
                       <th>Entry</th>
@@ -1318,6 +1412,7 @@ function PCRAnalysis({ apiKey }) {
                           <td>{parts[0].replace('Liquidity sweep + ', '').replace('Institutional ', '')}</td>
                           <td>{parts[1] || 'Confirmed structure'}</td>
                           {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.chart || 'No chart structure confirmation'}</td>}
+                          {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.threeMinuteChart || 'No 3m chart structure confirmation'}</td>}
                           {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.fiveMinuteChart || 'No 5m chart structure confirmation'}</td>}
                           {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.emaStatus || 'EMA confirmation unavailable'}<small>{signal.minuteConfirmation?.ema || ''}</small></td>}
                           <td>₹{Number(signal.entry).toFixed(2)}</td>
