@@ -7,6 +7,7 @@ const FileStore = require('session-file-store')(session);
 const cors = require('cors');
 const axios = require('axios');
 const dotenv = require('dotenv');
+const WebSocket = require('ws');
 
 dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
 
@@ -27,6 +28,9 @@ const autoTradingState = {
   activeTrade: null,
   lastSignalKey: null,
 };
+
+// WebSocket connection pool to avoid rate limiting
+const kiteSocketPool = new Map(); // sessionId -> { socket, subscribers: Map(token -> callbacks) }
 
 fs.mkdirSync(sessionStorePath, { recursive: true });
 
@@ -195,6 +199,26 @@ function getKiteHeaders(sessionData) {
     'X-Kite-Version': '3',
     Authorization: `token ${sessionData.kiteApiKey || kiteApiKey}:${sessionData.kiteAccessToken}`,
   };
+}
+
+function decodeKiteLtpPackets(payload) {
+  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  const packets = [];
+  if (view.byteLength < 2) return packets;
+  let offset = 2;
+  const packetCount = view.getUint16(0);
+  for (let index = 0; index < packetCount && offset + 2 <= view.byteLength; index += 1) {
+    const packetLength = view.getUint16(offset);
+    offset += 2;
+    if (packetLength >= 8 && offset + packetLength <= view.byteLength) {
+      packets.push({
+        instrumentToken: view.getInt32(offset),
+        lastPrice: view.getInt32(offset + 4) / 100,
+      });
+    }
+    offset += packetLength;
+  }
+  return packets;
 }
 
 async function placeKiteOrder(sessionData, order) {
@@ -373,6 +397,134 @@ async function exchangeRequestToken(apiKey, apiSecret, requestToken) {
   });
 app.get('/api/kite/session', (req, res) => {
   res.json({ authenticated: Boolean(req.session.kiteAccessToken) });
+});
+
+app.get('/api/kite/live-ticks', requireKiteSession, (req, res) => {
+  const instrumentToken = Number(req.query.instrument_token);
+  if (!Number.isInteger(instrumentToken) || instrumentToken <= 0) {
+    return res.status(400).json({ error: 'A valid instrument_token is required.' });
+  }
+
+  const sessionId = req.session.id;
+  const apiKey = req.session.kiteApiKey || kiteApiKey;
+  
+  res.status(200);
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+  });
+  res.flushHeaders();
+
+  // Create callback for this specific client
+  const callback = (tick) => {
+    res.write(`data: ${JSON.stringify({ ...tick, timestamp: Date.now() })}\n\n`);
+  };
+
+  // Get or create pool entry for this session
+  if (!kiteSocketPool.has(sessionId)) {
+    console.log(`[Live Ticks Pool] Creating new Kite WebSocket for session ${sessionId}`);
+    
+    const streamUrl = `wss://ws.kite.trade?api_key=${encodeURIComponent(apiKey)}&access_token=${encodeURIComponent(req.session.kiteAccessToken)}`;
+    const kiteSocket = new WebSocket(streamUrl);
+    
+    const poolEntry = {
+      socket: kiteSocket,
+      subscribers: new Map(),
+      reconnectAttempts: 0,
+      maxReconnectAttempts: 5,
+    };
+    
+    kiteSocket.on('open', () => {
+      console.log(`[Live Ticks Pool] Kite WebSocket connected for session ${sessionId}`);
+      poolEntry.reconnectAttempts = 0;
+      
+      // Subscribe to all currently registered tokens
+      const tokens = Array.from(poolEntry.subscribers.keys());
+      if (tokens.length > 0) {
+        kiteSocket.send(JSON.stringify({ a: 'subscribe', v: tokens }));
+        kiteSocket.send(JSON.stringify({ a: 'mode', v: ['ltp', tokens] }));
+        console.log(`[Live Ticks Pool] Subscribed to tokens: ${tokens.join(', ')}`);
+      }
+    });
+
+    kiteSocket.on('message', (message, isBinary) => {
+      if (!isBinary) return;
+      const packets = decodeKiteLtpPackets(message);
+      
+      packets.forEach(tick => {
+        const callbacks = poolEntry.subscribers.get(tick.instrumentToken);
+        if (callbacks) {
+          callbacks.forEach(cb => cb(tick));
+        }
+      });
+    });
+
+    kiteSocket.on('error', (error) => {
+      console.error(`[Live Ticks Pool] Kite WebSocket error for session ${sessionId}:`, error.message);
+      
+      // Try to reconnect with exponential backoff
+      if (poolEntry.reconnectAttempts < poolEntry.maxReconnectAttempts) {
+        poolEntry.reconnectAttempts += 1;
+        const backoffMs = Math.pow(2, poolEntry.reconnectAttempts) * 1000;
+        console.log(`[Live Ticks Pool] Reconnect attempt ${poolEntry.reconnectAttempts} in ${backoffMs}ms`);
+        
+        setTimeout(() => {
+          kiteSocket.close();
+          kiteSocketPool.delete(sessionId);
+        }, backoffMs);
+      } else {
+        console.error(`[Live Ticks Pool] Max reconnection attempts reached for session ${sessionId}`);
+        kiteSocketPool.delete(sessionId);
+      }
+    });
+
+    kiteSocket.on('close', () => {
+      console.log(`[Live Ticks Pool] Kite WebSocket closed for session ${sessionId}`);
+      kiteSocketPool.delete(sessionId);
+    });
+
+    kiteSocketPool.set(sessionId, poolEntry);
+  }
+
+  const poolEntry = kiteSocketPool.get(sessionId);
+
+  // Add this client to subscribers for this token
+  if (!poolEntry.subscribers.has(instrumentToken)) {
+    poolEntry.subscribers.set(instrumentToken, []);
+    
+    // If socket is already open, subscribe to this token
+    if (poolEntry.socket.readyState === WebSocket.OPEN) {
+      poolEntry.socket.send(JSON.stringify({ a: 'subscribe', v: [instrumentToken] }));
+      poolEntry.socket.send(JSON.stringify({ a: 'mode', v: ['ltp', [instrumentToken]] }));
+      console.log(`[Live Ticks Pool] Subscribed to token ${instrumentToken}`);
+    }
+  }
+
+  poolEntry.subscribers.get(instrumentToken).push(callback);
+  console.log(`[Live Ticks Pool] Added subscriber for token ${instrumentToken}, total: ${poolEntry.subscribers.get(instrumentToken).length}`);
+
+  // Cleanup on client disconnect
+  req.on('close', () => {
+    const subscribers = poolEntry.subscribers.get(instrumentToken);
+    if (subscribers) {
+      const index = subscribers.indexOf(callback);
+      if (index > -1) {
+        subscribers.splice(index, 1);
+      }
+      
+      // If no more subscribers for this token, unsubscribe
+      if (subscribers.length === 0) {
+        poolEntry.subscribers.delete(instrumentToken);
+        if (poolEntry.socket.readyState === WebSocket.OPEN) {
+          poolEntry.socket.send(JSON.stringify({ a: 'unsubscribe', v: [instrumentToken] }));
+          console.log(`[Live Ticks Pool] Unsubscribed from token ${instrumentToken}`);
+        }
+      }
+    }
+    
+    console.log(`[Live Ticks Pool] Stream closed for token ${instrumentToken}`);
+  });
 });
 
 app.post('/api/kite/connect', async (req, res) => {

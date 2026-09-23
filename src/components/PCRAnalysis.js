@@ -8,6 +8,7 @@ import {
   TimeScale,
   Tooltip,
   Legend,
+  Filler,
 } from 'chart.js';
 import 'chartjs-adapter-date-fns';
 import { createChart, createSeriesMarkers, CandlestickSeries, LineSeries } from 'lightweight-charts';
@@ -21,6 +22,7 @@ ChartJS.register(
   PointElement,
   Tooltip,
   Legend,
+  Filler,
 );
 
 const TIMEFRAME_OPTIONS = ['minute', '3minute', '5minute', '10minute', '15minute', '30minute', '60minute', 'day'];
@@ -89,6 +91,21 @@ function detectCandlestickPatterns(candles, index) {
   if (previous.c > previous.o && isBear && current.o >= previous.c && current.c < (previous.o + previous.c) / 2) bearish.push('Dark cloud cover');
   if (Math.abs(current.l - previous.l) / Math.max(previous.l, 0.0001) < 0.002 && isBull) bullish.push('Tweezer bottom');
   if (Math.abs(current.h - previous.h) / Math.max(previous.h, 0.0001) < 0.002 && isBear) bearish.push('Tweezer top');
+
+  // 1-Minute Specific Patterns (High Probability for Scalping)
+  // Pin Bar / Rejection Candle (long wick, small body at opposite end)
+  const pinBarThreshold = range * 0.3;
+  if (isBull && lowerWick >= body * 3 && upperWick <= body * 0.5) bullish.push('Pin bar up');
+  if (isBear && upperWick >= body * 3 && lowerWick <= body * 0.5) bearish.push('Pin bar down');
+  
+  // Strong Reversal (opposite to previous trend with conviction)
+  if (previous && previous.c < previous.o && isBull && body >= previousBody * 1.5) bullish.push('Strong reversal up');
+  if (previous && previous.c > previous.o && isBear && body >= previousBody * 1.5) bearish.push('Strong reversal down');
+  
+  // Break of Previous Candle (aggressive directional move)
+  if (isBull && current.c > previous.h && body >= range * 0.6) bullish.push('Break above previous');
+  if (isBear && current.c < previous.l && body >= range * 0.6) bearish.push('Break below previous');
+
   if (beforePrevious) {
     if (beforePrevious.c < beforePrevious.o && previous.c < previous.o && isBull && current.c > beforePrevious.o) bullish.push('Morning star');
     if (beforePrevious.c > beforePrevious.o && previous.c > previous.o && isBear && current.c < beforePrevious.o) bearish.push('Evening star');
@@ -98,6 +115,7 @@ function detectCandlestickPatterns(candles, index) {
     if (current.h > previous.h && current.l < previous.l) neutral.push('Outside bar');
     if (isBull && previous.c < previous.o && current.o > previous.o && current.c < previous.c) bearish.push('Bearish harami');
     if (isBear && previous.c > previous.o && current.o < previous.o && current.c > previous.c) bullish.push('Bullish harami');
+    
     if (threeBack) {
       const threeBackBear = threeBack.c < threeBack.o;
       const threeBackBull = threeBack.c > threeBack.o;
@@ -116,11 +134,14 @@ function detectCandlestickPatterns(candles, index) {
   return { bullish, bearish, neutral };
 }
 
-function findChartPatterns(candles) {
+function findChartPatterns(candles, isOneMinute = false) {
   const recent = candles.slice(-40);
   const highs = recent.filter((candle, index) => index > 0 && index < recent.length - 1 && candle.h >= recent[index - 1].h && candle.h >= recent[index + 1].h);
   const lows = recent.filter((candle, index) => index > 0 && index < recent.length - 1 && candle.l <= recent[index - 1].l && candle.l <= recent[index + 1].l);
-  const matchLevel = (items, field) => items.length >= 2 && Math.abs(items.at(-1)[field] - items.at(-2)[field]) / Math.max(items.at(-2)[field], 0.0001) < 0.01;
+  
+  // For 1-minute trading, use tighter tolerance (0.5% instead of 1%)
+  const tolerance = isOneMinute ? 0.005 : 0.01;
+  const matchLevel = (items, field) => items.length >= 2 && Math.abs(items.at(-1)[field] - items.at(-2)[field]) / Math.max(items.at(-2)[field], 0.0001) < tolerance;
   const patterns = [];
   if (highs.length >= 3 && matchLevel(highs, 'h')) patterns.push('Triple top');
   else if (highs.length >= 2 && matchLevel(highs, 'h')) patterns.push('Double top');
@@ -218,6 +239,76 @@ function classifyChartPatterns(patterns) {
   return { bullish, bearish };
 }
 
+// Detect high-probability 1-minute specific patterns for scalping/intraday
+function detectOneMinutePatterns(candles) {
+  if (candles.length < 10) return { bullish: [], bearish: [] };
+  
+  const recent = candles.slice(-15); // Last 15 candles for 1-minute analysis
+  const bullish = [];
+  const bearish = [];
+  
+  // 1. Consolidation Breakout (narrow range followed by break)
+  const midpoint = Math.floor(recent.length / 2);
+  const consolidationZone = recent.slice(0, midpoint);
+  const breakoutZone = recent.slice(midpoint);
+  const consolHigh = Math.max(...consolidationZone.map(c => c.h));
+  const consolLow = Math.min(...consolidationZone.map(c => c.l));
+  const consolRange = consolHigh - consolLow;
+  const breakHigh = Math.max(...breakoutZone.map(c => c.h));
+  const breakLow = Math.min(...breakoutZone.map(c => c.l));
+  
+  if (consolRange < Math.max(...recent.map(c => c.h - c.l)) * 0.8) {
+    if (breakHigh > consolHigh) bullish.push('Consolidation breakout up');
+    if (breakLow < consolLow) bearish.push('Consolidation breakout down');
+  }
+  
+  // 2. Momentum Surge (series of candles moving in same direction with increasing body size)
+  const last3 = recent.slice(-3);
+  const last3Bodies = last3.map(c => Math.abs(c.c - c.o));
+  const bullish3 = last3.every(c => c.c > c.o) && last3Bodies[1] > last3Bodies[0] && last3Bodies[2] > last3Bodies[1];
+  const bearish3 = last3.every(c => c.c < c.o) && last3Bodies[1] > last3Bodies[0] && last3Bodies[2] > last3Bodies[1];
+  
+  if (bullish3) bullish.push('Momentum surge up');
+  if (bearish3) bearish.push('Momentum surge down');
+  
+  // 3. Support/Resistance Bounce (rejected at level, bouncing back)
+  const last5 = recent.slice(-5);
+  const low5 = Math.min(...last5.map(c => c.l));
+  const high5 = Math.max(...last5.map(c => c.h));
+  const lastCandle = recent.at(-1);
+  const secondLast = recent.at(-2);
+  
+  if (secondLast && lastCandle.l >= low5 && lastCandle.c > lastCandle.o && lastCandle.c > secondLast.c) {
+    bullish.push('Support bounce');
+  }
+  if (secondLast && lastCandle.h <= high5 && lastCandle.c < lastCandle.o && lastCandle.c < secondLast.c) {
+    bearish.push('Resistance rejection');
+  }
+  
+  // 4. Higher Highs & Higher Lows (Uptrend) / Lower Highs & Lower Lows (Downtrend)
+  if (recent.length >= 4) {
+    const prev2 = recent.slice(-4, -2);
+    const curr2 = recent.slice(-2);
+    const prevHigh = Math.max(...prev2.map(c => c.h));
+    const prevLow = Math.min(...prev2.map(c => c.l));
+    const currHigh = Math.max(...curr2.map(c => c.h));
+    const currLow = Math.min(...curr2.map(c => c.l));
+    
+    if (currHigh > prevHigh && currLow > prevLow) bullish.push('Higher highs and lows');
+    if (currHigh < prevHigh && currLow < prevLow) bearish.push('Lower highs and lows');
+  }
+  
+  // 5. Gap Continuation (gap in direction of trend)
+  if (recent.length >= 2) {
+    const prev = recent.at(-2);
+    const curr = recent.at(-1);
+    if (curr.o > prev.h && curr.c > curr.o) bullish.push('Gap continuation up');
+    if (curr.o < prev.l && curr.c < curr.o) bearish.push('Gap continuation down');
+  }
+  
+  return { bullish, bearish };
+}
+
 function getMarketConfirmations(candles) {
   const ema20 = calculateEma(candles, 20).at(-1)?.value || 0;
   const ema50 = calculateEma(candles, 50).at(-1)?.value || 0;
@@ -311,116 +402,60 @@ function calculateInstitutionalTradeSignal(candles) {
 }
 
 function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = [], threeMinuteCandles = []) {
-  let institutionalSignal = calculateInstitutionalTradeSignal(candles);
-  if (candles.length < 40 || fiveMinuteCandles.length < 20 || threeMinuteCandles.length < 20) {
+  // Institutional 1-minute approach: Focus on price action, liquidity sweeps, and support/resistance
+  if (candles.length < 40) {
     return {
-      ...institutionalSignal,
-      minuteConfirmation: { status: 'Need 1m, 3m, and 5m candles for multi-timeframe confirmation.' },
+      action: 'HOLD',
+      pattern: 'Insufficient data',
+      reason: 'Need at least 40 one-minute candles for institutional analysis.',
     };
   }
 
+  const institutionalSignal = calculateInstitutionalTradeSignal(candles);
   const window = candles.slice(-40);
   const candlestickPatterns = detectCandlestickPatterns(window, window.length - 1);
-  const chartPatterns = classifyChartPatterns(findChartPatterns(window));
-  const threeMinuteChartPatterns = classifyChartPatterns(findChartPatterns(threeMinuteCandles.slice(-40)));
-  const fiveMinuteWindow = fiveMinuteCandles.slice(-40);
-  const fiveMinuteChartPatterns = classifyChartPatterns(findChartPatterns(fiveMinuteWindow));
-  const fiveMinutePivotHighs = fiveMinuteWindow.filter((candle, index) => index > 0 && index < fiveMinuteWindow.length - 1
-    && candle.h >= fiveMinuteWindow[index - 1].h && candle.h >= fiveMinuteWindow[index + 1].h);
-  const fiveMinutePivotLows = fiveMinuteWindow.filter((candle, index) => index > 0 && index < fiveMinuteWindow.length - 1
-    && candle.l <= fiveMinuteWindow[index - 1].l && candle.l <= fiveMinuteWindow[index + 1].l);
-  const ema10Series = calculateEma(candles, 10);
-  const ema20Series = calculateEma(candles, 20);
-  const ema10 = ema10Series.at(-1)?.value || 0;
-  const ema20 = ema20Series.at(-1)?.value || 0;
-  const previousEma10 = ema10Series.at(-2)?.value || 0;
-  const previousEma20 = ema20Series.at(-2)?.value || 0;
+  const chartPatterns = classifyChartPatterns(findChartPatterns(window, true)); // 1-minute: tighter tolerance
+  const oneMinutePatterns = detectOneMinutePatterns(window); // High-probability 1-min scalp patterns
+
   const lastClose = window.at(-1).c;
-  const lastCandle = window.at(-1);
-  const microStructure = window.slice(-16, -1);
-  const microResistance = Math.max(...microStructure.map(candle => candle.h));
-  const microSupport = Math.min(...microStructure.map(candle => candle.l));
-  const crossedUp = previousEma10 <= previousEma20 && ema10 > ema20;
-  const crossedDown = previousEma10 >= previousEma20 && ema10 < ema20;
-  const emaStatus = crossedUp
-    ? 'EMA10 crossed above EMA20 on the latest one-minute candle.'
-    : crossedDown
-      ? 'EMA10 crossed below EMA20 on the latest one-minute candle.'
-      : ema10 > ema20
-        ? 'EMA10 remains above EMA20; no fresh crossover on the latest candle.'
-        : ema10 < ema20
-          ? 'EMA10 remains below EMA20; no fresh crossover on the latest candle.'
-          : 'EMA10 and EMA20 are equal.';
   const minuteConfirmation = {
     candlestick: `Bullish: ${candlestickPatterns.bullish.join(', ') || 'none'}; bearish: ${candlestickPatterns.bearish.join(', ') || 'none'}`,
     chart: `1m bullish: ${chartPatterns.bullish.join(', ') || 'none'}; bearish: ${chartPatterns.bearish.join(', ') || 'none'}`,
-    threeMinuteChart: `3m bullish: ${threeMinuteChartPatterns.bullish.join(', ') || 'none'}; bearish: ${threeMinuteChartPatterns.bearish.join(', ') || 'none'}`,
-    fiveMinuteChart: `5m bullish: ${fiveMinuteChartPatterns.bullish.join(', ') || 'none'}; bearish: ${fiveMinuteChartPatterns.bearish.join(', ') || 'none'}`,
-    ema: `EMA10 ₹${ema10.toFixed(2)} | EMA20 ₹${ema20.toFixed(2)} | Close ₹${lastClose.toFixed(2)}`,
-    emaStatus,
+    oneMinuteScalp: `1m scalp bullish: ${oneMinutePatterns.bullish.join(', ') || 'none'}; bearish: ${oneMinutePatterns.bearish.join(', ') || 'none'}`,
   };
 
-  const fiveMinuteBullish = fiveMinuteChartPatterns.bullish.length > 0;
-  const fiveMinuteBearish = fiveMinuteChartPatterns.bearish.length > 0;
-  if (fiveMinuteBullish === fiveMinuteBearish) {
-    return {
-      action: 'HOLD',
-      pattern: 'Five-minute premium direction unclear',
-      reason: 'A one-minute entry requires exactly one clear five-minute premium chart direction; mixed or missing five-minute structures are ignored.',
-      minuteConfirmation,
-    };
-  }
-
-  const fiveMinuteAction = fiveMinuteBullish ? 'BUY' : 'SELL';
-  if (['BUY', 'SELL'].includes(institutionalSignal.action) && institutionalSignal.action !== fiveMinuteAction) {
-    return {
-      action: 'HOLD',
-      pattern: 'Five-minute premium direction conflicts with setup',
-      reason: `The five-minute premium chart is ${fiveMinuteAction}, but the one-minute institutional setup is ${institutionalSignal.action}.`,
-      minuteConfirmation,
-    };
-  }
-
+  // Institutional 1-minute entry: Liquidity sweep + retest (from institutional signal) with 1m pattern confirmation
   if (!['BUY', 'SELL'].includes(institutionalSignal.action)) {
-    institutionalSignal = {
-      action: fiveMinuteAction,
-      pattern: `Five-minute premium ${fiveMinuteAction === 'BUY' ? 'bullish' : 'bearish'} structure`,
-      reason: 'A clear five-minute premium chart pattern established direction; the one-minute chart is used for entry timing.',
+    return {
+      action: 'HOLD',
+      pattern: 'No institutional setup',
+      reason: 'Waiting for liquidity sweep and order-block retest at the 1-minute level.',
+      minuteConfirmation,
     };
   }
 
   const isBuy = institutionalSignal.action === 'BUY';
   const alignedCandlestick = isBuy ? candlestickPatterns.bullish : candlestickPatterns.bearish;
   const alignedOneMinuteChart = isBuy ? chartPatterns.bullish : chartPatterns.bearish;
-  const alignedThreeMinuteChart = isBuy ? threeMinuteChartPatterns.bullish : threeMinuteChartPatterns.bearish;
-  const alignedFiveMinuteChart = isBuy ? fiveMinuteChartPatterns.bullish : fiveMinuteChartPatterns.bearish;
-  const conflictingOneMinuteChart = isBuy ? chartPatterns.bearish : chartPatterns.bullish;
-  const conflictingThreeMinuteChart = isBuy ? threeMinuteChartPatterns.bearish : threeMinuteChartPatterns.bullish;
-  const conflictingFiveMinuteChart = isBuy ? fiveMinuteChartPatterns.bearish : fiveMinuteChartPatterns.bullish;
-  const emaAligned = isBuy
-    ? ema10 > ema20 && lastClose > ema10
-    : ema10 < ema20 && lastClose < ema10;
-
-  const hasOneMinuteConfirmation = alignedCandlestick.length > 0 || alignedOneMinuteChart.length > 0;
-  const unresolvedOneMinuteConflict = conflictingOneMinuteChart.length > 0 && alignedOneMinuteChart.length === 0;
-  const unresolvedThreeMinuteConflict = conflictingThreeMinuteChart.length > 0 && alignedThreeMinuteChart.length === 0;
-  const unresolvedFiveMinuteConflict = conflictingFiveMinuteChart.length > 0 && alignedFiveMinuteChart.length === 0;
-  if (!hasOneMinuteConfirmation || alignedThreeMinuteChart.length === 0 || unresolvedOneMinuteConflict || unresolvedThreeMinuteConflict || unresolvedFiveMinuteConflict || !emaAligned) {
+  const alignedOneMinuteScalp = isBuy ? oneMinutePatterns.bullish : oneMinutePatterns.bearish;
+  
+  const hasOneMinuteConfirmation = alignedCandlestick.length > 0 || alignedOneMinuteChart.length > 0 || alignedOneMinuteScalp.length > 0;
+  
+  if (!hasOneMinuteConfirmation) {
     return {
       action: 'HOLD',
-      pattern: 'One-minute confirmation incomplete',
-      reason: 'Requires aligned 1m and 3m chart patterns, five-minute premium direction, and EMA 10/20 alignment.',
+      pattern: 'Institutional setup but 1m confirmation missing',
+      reason: 'Waiting for candlestick pattern, chart structure, or scalp pattern confirmation at the 1-minute level.',
       minuteConfirmation,
     };
   }
 
   return {
     ...institutionalSignal,
-    pattern: `${institutionalSignal.pattern} | Candle ${alignedCandlestick.join(', ') || 'none'} | 1m Chart ${alignedOneMinuteChart.join(', ') || 'none'} | 3m Chart ${alignedThreeMinuteChart.join(', ')} | 5m Chart filter clear | EMA10 ${ema10.toFixed(2)} ${isBuy ? '>' : '<'} EMA20 ${ema20.toFixed(2)}`,
-    reason: `${institutionalSignal.reason} One-minute candlestick or chart structure confirms the five-minute premium chart direction with EMA 10/20 alignment.`,
+    pattern: `${institutionalSignal.pattern} | Confirmation: Candle ${alignedCandlestick.join(', ') || 'none'} | 1m ${alignedOneMinuteChart.join(', ') || 'none'} | Scalp ${alignedOneMinuteScalp.join(', ') || 'none'}`,
+    reason: `${institutionalSignal.reason} One-minute price action confirms the institutional setup.`,
     minuteConfirmation,
-    premiumSupport: fiveMinutePivotLows.filter(pivot => pivot.l < lastClose).at(-1)?.l,
-    premiumResistance: fiveMinutePivotHighs.find(pivot => pivot.h > lastClose)?.h,
+    isOneMinuteTrade: true,
   };
 }
 
@@ -443,46 +478,79 @@ function calculateTradeSignal(candles, oneMinuteMode = false, fiveMinuteCandles 
 
 function calculateTradeLevels(candles, signal, oneMinuteMode = false) {
   const signalCandle = candles.at(-1);
-  const recent = candles.slice(-20);
   const entry = signalCandle.c;
-  const recentLow = Math.min(...recent.map(candle => candle.l));
-  const recentHigh = Math.max(...recent.map(candle => candle.h));
-  const averageRange = recent.reduce((sum, candle) => sum + (candle.h - candle.l), 0) / recent.length;
-  const fallbackRisk = Math.max(averageRange * 1.2, 0.5);
-
-  if (!oneMinuteMode || !signal.minuteConfirmation) {
+  
+  if (!oneMinuteMode) {
+    const recent = candles.slice(-20);
+    const recentLow = Math.min(...recent.map(candle => candle.l));
+    const recentHigh = Math.max(...recent.map(candle => candle.h));
+    const averageRange = recent.reduce((sum, candle) => sum + (candle.h - candle.l), 0) / recent.length;
+    const fallbackRisk = Math.max(averageRange * 1.2, 0.5);
     return signal.action === 'BUY'
       ? { entry, target: Math.max(recentHigh, entry + fallbackRisk * 2), stopLoss: recentLow - fallbackRisk }
       : { entry, target: Math.min(recentLow, entry - fallbackRisk * 2), stopLoss: recentHigh + fallbackRisk };
   }
 
+  // INSTITUTIONAL 1-MINUTE TRADING: Tight stops, precise risk/reward
+  const recentWindow = candles.slice(-20);
+  const recentLow = Math.min(...recentWindow.map(candle => candle.l));
+  const recentHigh = Math.max(...recentWindow.map(candle => candle.h));
+  const averageRange = recentWindow.reduce((sum, candle) => sum + (candle.h - candle.l), 0) / recentWindow.length;
+
+  // Find order blocks: Recent highs and lows that held (swing points)
   const structure = candles.slice(-40);
-  const pivotHighs = structure.filter((candle, index) => index > 0 && index < structure.length - 1
-    && candle.h >= structure[index - 1].h && candle.h >= structure[index + 1].h);
-  const pivotLows = structure.filter((candle, index) => index > 0 && index < structure.length - 1
-    && candle.l <= structure[index - 1].l && candle.l <= structure[index + 1].l);
-  const buffer = Math.max(averageRange * 0.35, 0.5);
+  const recentHighs = structure.filter((candle, index) => 
+    index > 0 && index < structure.length - 1 &&
+    candle.h >= structure[index - 1].h && candle.h >= structure[index + 1].h
+  );
+  const recentLows = structure.filter((candle, index) => 
+    index > 0 && index < structure.length - 1 &&
+    candle.l <= structure[index - 1].l && candle.l <= structure[index + 1].l
+  );
+
+  // Institutional approach: Place stop at recent swing point with minimal buffer
+  const minBuffer = Math.max(averageRange * 0.15, 0.25); // Tight 15% of avg range
 
   if (signal.action === 'BUY') {
-    const patternSupport = pivotLows.at(-1)?.l ?? recentLow;
-    const stopLoss = patternSupport - buffer;
+    // Stop at most recent swing low (order block low)
+    const lastSwingLow = recentLows.at(-1)?.l ?? recentLow;
+    const stopLoss = lastSwingLow - minBuffer; // Tight stop just below swing low
     const risk = entry - stopLoss;
-    const premiumTarget = signal.premiumResistance ?? pivotHighs.find(pivot => pivot.h > entry)?.h ?? recentHigh;
-    const target = premiumTarget > entry ? premiumTarget : entry + risk * 1.5;
-    return { entry, target, stopLoss, levelSource: '1m swing stop with 5m premium target' };
+    
+    // Target: 1:2 risk/reward (institutional standard)
+    const target = entry + (risk * 2);
+    
+    return {
+      entry,
+      target,
+      stopLoss,
+      risk,
+      rewardRatio: 2,
+      levelSource: 'Institutional 1m: swing low stop, 1:2 risk/reward',
+    };
   }
 
-  const patternResistance = pivotHighs.at(-1)?.h ?? recentHigh;
-  const stopLoss = patternResistance + buffer;
+  // SELL
+  const lastSwingHigh = recentHighs.at(-1)?.h ?? recentHigh;
+  const stopLoss = lastSwingHigh + minBuffer; // Tight stop just above swing high
   const risk = stopLoss - entry;
-  const premiumTarget = signal.premiumSupport ?? [...pivotLows].reverse().find(pivot => pivot.l < entry)?.l ?? recentLow;
-  const target = Math.max(0.05, premiumTarget < entry ? premiumTarget : entry - risk * 1.5);
-  return { entry, target, stopLoss, levelSource: '1m swing stop with 5m premium target' };
+  
+  // Target: 1:2 risk/reward
+  const target = Math.max(0.05, entry - (risk * 2));
+  
+  return {
+    entry,
+    target,
+    stopLoss,
+    risk,
+    rewardRatio: 2,
+    levelSource: 'Institutional 1m: swing high stop, 1:2 risk/reward',
+  };
 }
 
 function calculateCurrentTradePlan(candles, signal) {
   if (!signal || !['BUY', 'SELL'].includes(signal.action) || candles.length === 0) return null;
-  return { ...signal, time: candles.at(-1).x, ...calculateTradeLevels(candles, signal, Boolean(signal.minuteConfirmation)) };
+  return { ...signal, time: candles.at(-1).x, ...calculateTradeLevels(candles, signal, signal.isOneMinuteTrade) };
 }
 
 function evaluateSignalWithFutureCandles(signal, future, target, stopLoss, sessionCloseCandle = null) {
@@ -646,6 +714,7 @@ function PCRAnalysis({ apiKey }) {
   const [selectedExpiry, setSelectedExpiry] = useState('');
   const [selectedStrike, setSelectedStrike] = useState(null);
   const [selectedInterval, setSelectedInterval] = useState('5minute');
+  const [livePrice, setLivePrice] = useState(null);
   const [candleData, setCandleData] = useState([]);
   const [closeChartData, setCloseChartData] = useState(null);
   const [rsiChartData, setRsiChartData] = useState(null);
@@ -659,6 +728,14 @@ function PCRAnalysis({ apiKey }) {
   const [signalRows, setSignalRows] = useState([]);
   const [signalFilter, setSignalFilter] = useState('ALL');
   const candleChartRef = React.useRef(null);
+  const chartSeriesRef = React.useRef(null);
+  const ema10SeriesRef = React.useRef(null);
+  const ema20SeriesRef = React.useRef(null);
+  const candleDataRef = React.useRef([]);
+  const lastUpdateTimeRef = React.useRef(0);
+  const lastCandleOpenRef = React.useRef(null);
+  const currentCandleBoundaryRef = React.useRef(null);
+  const currentCandleDataRef = React.useRef({ time: null, open: null, high: null, low: null, close: null });
   const [latestCandle, setLatestCandle] = useState(null);
   const [loading, setLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(false);
@@ -680,6 +757,116 @@ function PCRAnalysis({ apiKey }) {
 
     return () => clearInterval(refreshInterval);
   }, [selectedStrike, selectedInterval]);
+
+  useEffect(() => {
+    if (!selectedStrike?.instrumentToken) {
+      console.log('[LiveTicks] No instrument token selected');
+      return undefined;
+    }
+    console.log(`[LiveTicks] Connecting to live-ticks for token: ${selectedStrike.instrumentToken} (${selectedStrike.tradingSymbol})`);
+    
+    let reconnectTimeout = null;
+    const streamRef = { current: null };
+    
+    const connectStream = () => {
+      streamRef.current = new EventSource(`/api/kite/live-ticks?instrument_token=${selectedStrike.instrumentToken}`, { withCredentials: true });
+      
+      streamRef.current.onopen = () => console.log(`[LiveTicks] EventSource connected for ${selectedStrike.instrumentToken}`);
+      
+      streamRef.current.onmessage = (event) => {
+        try {
+          const tick = JSON.parse(event.data);
+          console.log(`[LiveTicks] Received update for ${selectedStrike.instrumentToken}: ₹${tick.lastPrice.toFixed(2)}`);
+          setLivePrice(tick.lastPrice);
+        } catch (err) {
+          console.error('[LiveTicks] Failed to parse message:', err, event.data);
+        }
+      };
+      
+      streamRef.current.onerror = (err) => {
+        console.error(`[LiveTicks] EventSource error for ${selectedStrike.instrumentToken}:`, err);
+        streamRef.current.close();
+        streamRef.current = null;
+        
+        // Attempt to reconnect after 3 seconds
+        console.log('[LiveTicks] Attempting to reconnect in 3 seconds...');
+        reconnectTimeout = setTimeout(() => {
+          connectStream();
+        }, 3000);
+      };
+    };
+    
+    connectStream();
+    
+    return () => {
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (streamRef.current) {
+        console.log(`[LiveTicks] Closing stream for ${selectedStrike.instrumentToken}`);
+        streamRef.current.close();
+      }
+    };
+  }, [selectedStrike]);
+
+  useEffect(() => {
+    if (!livePrice || !chartSeriesRef.current || candleData.length === 0) return;
+    
+    const getIntervalSeconds = (interval) => {
+      const map = { minute: 60, '3-minute': 180, '5-minute': 300, '15-minute': 900, hour: 3600, day: 86400 };
+      return map[interval] || 60;
+    };
+
+    const getCandleBoundary = (timestamp, intervalSeconds) => {
+      return Math.floor(timestamp / intervalSeconds) * intervalSeconds;
+    };
+
+    const lastCandleData = candleData[candleData.length - 1];
+    if (!lastCandleData) return;
+    
+    const lastCandleTime = Math.floor(lastCandleData.x / 1000);
+    const currentTime = Math.floor(Date.now() / 1000);
+    const intervalSeconds = getIntervalSeconds(selectedInterval);
+    const currentCandleBoundary = getCandleBoundary(currentTime, intervalSeconds);
+
+    try {
+      if (currentCandleBoundary > currentCandleBoundaryRef.current) {
+        // New candle period - finalize previous candle first, then create new one
+        if (currentCandleDataRef.current.time !== null) {
+          // Finalize the previous candle with its last known OHLC
+          chartSeriesRef.current.update(currentCandleDataRef.current);
+          console.log(`[Chart] Finalized previous candle: O=${currentCandleDataRef.current.open.toFixed(2)} H=${currentCandleDataRef.current.high.toFixed(2)} L=${currentCandleDataRef.current.low.toFixed(2)} C=${currentCandleDataRef.current.close.toFixed(2)}`);
+        }
+        
+        // Create new candle
+        lastCandleOpenRef.current = livePrice;
+        currentCandleBoundaryRef.current = currentCandleBoundary;
+        currentCandleDataRef.current = {
+          time: currentCandleBoundary,
+          open: livePrice,
+          high: livePrice,
+          low: livePrice,
+          close: livePrice,
+        };
+        
+        chartSeriesRef.current.update(currentCandleDataRef.current);
+        console.log(`[Chart] New candle created at ${new Date(currentCandleBoundary * 1000).toISOString()}: O=${livePrice.toFixed(2)}`);
+      } else {
+        // Same candle period - update current candle tracking
+        const candleOpen = lastCandleOpenRef.current ?? lastCandleData.o;
+        currentCandleDataRef.current = {
+          time: currentCandleBoundaryRef.current ?? lastCandleTime,
+          open: candleOpen,
+          high: Math.max(currentCandleDataRef.current.high || lastCandleData.h, livePrice),
+          low: Math.min(currentCandleDataRef.current.low || lastCandleData.l, livePrice),
+          close: livePrice,
+        };
+        
+        chartSeriesRef.current.update(currentCandleDataRef.current);
+        console.log(`[Chart] Updated candle: O=${currentCandleDataRef.current.open.toFixed(2)} H=${currentCandleDataRef.current.high.toFixed(2)} L=${currentCandleDataRef.current.low.toFixed(2)} C=${currentCandleDataRef.current.close.toFixed(2)}`);
+      }
+    } catch (err) {
+      console.error('[Chart] Failed to update candle:', err.message);
+    }
+  }, [livePrice, candleData, selectedInterval]);
 
   useEffect(() => {
     const availableExpiries = strikeOptions
@@ -935,20 +1122,23 @@ function PCRAnalysis({ apiKey }) {
     const container = candleChartRef.current;
     if (!container || candleData.length === 0) return undefined;
 
+    candleDataRef.current = candleData;
     const chart = createChart(container, {
       width: container.clientWidth,
-      height: 360,
-      layout: { background: { color: '#ffffff' }, textColor: '#475569' },
+      height: 480,
+      layout: { background: { color: '#ffffff' }, textColor: '#334155' },
       grid: {
-        vertLines: { color: '#eef2f7' },
-        horzLines: { color: '#eef2f7' },
+        vertLines: { color: '#f0f3f7', style: 1 },
+        horzLines: { color: '#f0f3f7', style: 1 },
       },
       rightPriceScale: {
-        borderColor: '#cbd5e1',
-        scaleMargins: { top: 0.1, bottom: 0.1 },
+        borderColor: '#d1d5db',
+        textColor: '#334155',
+        scaleMargins: { top: 0.15, bottom: 0.15 },
       },
       timeScale: {
-        borderColor: '#cbd5e1',
+        borderColor: '#d1d5db',
+        textColor: '#334155',
         timeVisible: selectedInterval !== 'day',
         secondsVisible: false,
         tickMarkFormatter: (time) => {
@@ -963,13 +1153,16 @@ function PCRAnalysis({ apiKey }) {
       },
     });
     const series = chart.addSeries(CandlestickSeries, {
-      upColor: '#15803d',
-      downColor: '#dc2626',
-      borderVisible: false,
-      wickUpColor: '#15803d',
-      wickDownColor: '#dc2626',
+      upColor: '#26a69a',
+      downColor: '#ef5350',
+      borderUpColor: '#26a69a',
+      borderDownColor: '#ef5350',
+      wickUpColor: '#26a69a',
+      wickDownColor: '#ef5350',
+      borderVisible: true,
       priceFormat: { type: 'price', precision: 2, minMove: 0.05 },
     });
+    chartSeriesRef.current = series;
     series.setData(candleData.map(candle => ({
       time: Math.floor(candle.x / 1000),
       open: candle.o,
@@ -977,30 +1170,31 @@ function PCRAnalysis({ apiKey }) {
       low: candle.l,
       close: candle.c,
     })));
-    const ema10 = chart.addSeries(LineSeries, { color: '#fbbf24', lineWidth: 2, title: 'EMA 10', priceLineVisible: false });
-    const ema20 = chart.addSeries(LineSeries, { color: '#38bdf8', lineWidth: 2, title: 'EMA 20', priceLineVisible: false });
+    lastCandleOpenRef.current = candleData[candleData.length - 1]?.o || null;
+    const lastCandleTime = Math.floor((candleData[candleData.length - 1]?.x || Date.now()) / 1000);
+    const getIntervalSeconds = (interval) => {
+      const map = { minute: 60, '3-minute': 180, '5-minute': 300, '15-minute': 900, hour: 3600, day: 86400 };
+      return map[interval] || 60;
+    };
+    const getCandleBoundary = (timestamp, intervalSeconds) => {
+      return Math.floor(timestamp / intervalSeconds) * intervalSeconds;
+    };
+    const lastCandle = candleData[candleData.length - 1];
+    currentCandleBoundaryRef.current = getCandleBoundary(lastCandleTime, getIntervalSeconds(selectedInterval));
+    currentCandleDataRef.current = {
+      time: currentCandleBoundaryRef.current,
+      open: lastCandle?.o || null,
+      high: lastCandle?.h || null,
+      low: lastCandle?.l || null,
+      close: lastCandle?.c || null,
+    };
+    const ema10 = chart.addSeries(LineSeries, { color: '#fbbf24', lineWidth: 2.5, title: 'EMA 10', priceLineVisible: true, priceLineColor: '#fbbf24' });
+    const ema20 = chart.addSeries(LineSeries, { color: '#38bdf8', lineWidth: 2.5, title: 'EMA 20', priceLineVisible: true, priceLineColor: '#38bdf8' });
+    ema10SeriesRef.current = ema10;
+    ema20SeriesRef.current = ema20;
     ema10.setData(calculateEma(candleData, 10));
     ema20.setData(calculateEma(candleData, 20));
     const markers = [];
-    candleData.forEach((candle, index) => {
-      if (index < 1) return;
-      const window = candleData.slice(Math.max(0, index - 49), index + 1);
-      const candlePatterns = detectCandlestickPatterns(window, window.length - 1);
-      const chartPatterns = findChartPatterns(window);
-      const chartDirection = classifyChartPatterns(chartPatterns);
-      const shortAverage = window.slice(-3).reduce((sum, item) => sum + item.c, 0) / Math.min(window.length, 3);
-      const longAverage = window.reduce((sum, item) => sum + item.c, 0) / window.length;
-      const trendUp = shortAverage > longAverage && candle.c > window[window.length - 2].c;
-      const trendDown = shortAverage < longAverage && candle.c < window[window.length - 2].c;
-      const market = getMarketConfirmations(window);
-      if (candlePatterns.bullish.length > 0 && chartDirection.bullish.length > 0 && trendUp && market.bullish) {
-        const text = `BUY | Candle: ${candlePatterns.bullish.join(', ')} | Chart: ${chartDirection.bullish.join(', ')} | EMA20 > EMA50 | RSI14 ${market.rsi.toFixed(1)} | All confirmed`;
-        markers.push({ time: Math.floor(candle.x / 1000), position: 'belowBar', color: '#15803d', shape: 'arrowUp', text });
-      } else if (candlePatterns.bearish.length > 0 && chartDirection.bearish.length > 0 && trendDown && market.bearish) {
-        const text = `SELL | Candle: ${candlePatterns.bearish.join(', ')} | Chart: ${chartDirection.bearish.join(', ')} | EMA20 < EMA50 | RSI14 ${market.rsi.toFixed(1)} | All confirmed`;
-        markers.push({ time: Math.floor(candle.x / 1000), position: 'aboveBar', color: '#dc2626', shape: 'arrowDown', text });
-      }
-    });
     const markerSeries = createSeriesMarkers(series, markers);
     chart.timeScale().fitContent();
 
@@ -1014,6 +1208,9 @@ function PCRAnalysis({ apiKey }) {
       resizeObserver.disconnect();
       markerSeries.detach();
       chart.remove();
+      chartSeriesRef.current = null;
+      ema10SeriesRef.current = null;
+      ema20SeriesRef.current = null;
     };
   }, [candleData, selectedInterval]);
 
@@ -1241,6 +1438,7 @@ function PCRAnalysis({ apiKey }) {
               <div className="ohlc-box"><span>High</span><strong>₹{Number(latestCandle.high || 0).toFixed(2)}</strong></div>
               <div className="ohlc-box"><span>Low</span><strong>₹{Number(latestCandle.low || 0).toFixed(2)}</strong></div>
               <div className="ohlc-box"><span>Close</span><strong>₹{Number(latestCandle.close || 0).toFixed(2)}</strong></div>
+              <div className="ohlc-box"><span>Live LTP</span><strong>₹{Number(livePrice ?? latestCandle.close ?? 0).toFixed(2)}</strong></div>
               <div className="ohlc-box"><span>Volume</span><strong>{Number(latestCandle.volume || 0).toLocaleString()}</strong></div>
             </div>
           )}

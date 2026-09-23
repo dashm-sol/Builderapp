@@ -59,7 +59,10 @@
 
 .chart-wrapper {
   position: relative;
-  height: 360px;
+  height: 480px;
+  background: #ffffff;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
 .chart-stack {
@@ -68,7 +71,7 @@
 }
 
 .chart-block {
-  background: #fff;
+  background: #ffffff;
   border: 1px solid #e1e6ef;
   border-radius: 8px;
   padding: 14px;
@@ -77,6 +80,8 @@
 .chart-block h4 {
   margin: 0 0 10px;
   color: #334155;
+  font-size: 0.95rem;
+  font-weight: 600;
 }
 
 .chart-legend,
@@ -95,7 +100,7 @@
   border-radius: 2px;
 }
 
-.legend-candle { background: #22c55e; }
+.legend-candle { background: #26a69a; }
 .legend-ema20 { background: #fbbf24; }
 .legend-ema50 { background: #38bdf8; }
 
@@ -389,14 +394,14 @@
 
 .chart-empty,
 .chart-loading {
-  min-height: 180px;
+  min-height: 240px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #666;
+  color: #94a3b8;
   border: 1px dashed #d9dfe8;
   border-radius: 8px;
-  background: #fff;
+  background: #f8fafc;
 }
 
 .pcr-header {
