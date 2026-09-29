@@ -523,6 +523,21 @@ function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = [], threeMin
   if (patterns.bullish.length > 0) {
     const patternName = patterns.bullish[0];
     const levels = patterns.breakoutLevels[patternName];
+    
+    // Calculate target to check if it's same as entry
+    const risk = levels.entry - levels.stopLoss;
+    const target = levels.entry + (risk * 2);
+    
+    // Ignore if entry and target are same
+    if (Math.abs(target - levels.entry) < 0.01) {
+      return {
+        action: 'HOLD',
+        pattern: 'Pattern ignored - entry and target are same',
+        reason: 'Entry and target prices are identical, trade skipped',
+        isOneMinuteTrade: true,
+      };
+    }
+    
     return {
       action: 'BUY',
       pattern: `Breakout: ${patternName}`,
@@ -536,6 +551,21 @@ function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = [], threeMin
   if (patterns.bearish.length > 0) {
     const patternName = patterns.bearish[0];
     const levels = patterns.breakoutLevels[patternName];
+    
+    // Calculate target to check if it's same as entry
+    const risk = levels.stopLoss - levels.entry;
+    const target = levels.entry - (risk * 2);
+    
+    // Ignore if entry and target are same
+    if (Math.abs(target - levels.entry) < 0.01) {
+      return {
+        action: 'HOLD',
+        pattern: 'Pattern ignored - entry and target are same',
+        reason: 'Entry and target prices are identical, trade skipped',
+        isOneMinuteTrade: true,
+      };
+    }
+    
     return {
       action: 'SELL',
       pattern: `Breakout: ${patternName}`,
@@ -810,6 +840,128 @@ function buildSignalRows(candles, oneMinuteMode = false, fiveMinuteCandles = [],
     .reverse();
 }
 
+function buildReverseSignalRows(signalRows) {
+  // Create reverse signals: if original is BUY, reverse is SELL (and vice versa)
+  // Reverse signal exits when original signal's target or stop loss is hit
+  return signalRows.map(signal => {
+    const reverseAction = signal.action === 'BUY' ? 'SELL' : 'BUY';
+    
+    // For reverse signal:
+    // Entry = original entry (where we reverse trade starts)
+    // Target = original stopLoss (profit target of reverse = where original stops out)
+    // StopLoss = original target (loss point of reverse = where original takes profit)
+    const reverseEntry = signal.entry;
+    const reverseTarget = signal.stopLoss;
+    const reverseStopLoss = signal.target;
+    
+    // Determine outcome based on original signal's outcome
+    // If original hit target (profit), reverse hits stopLoss (loss)
+    // If original hit stopLoss (loss), reverse hits target (profit)
+    let reverseOutcome = signal.outcome; // Pending initially
+    if (signal.outcome === 'True') {
+      // Original won, so reverse loses (original target = reverse stopLoss)
+      reverseOutcome = 'False';
+    } else if (signal.outcome === 'False') {
+      // Original lost, so reverse wins (original stopLoss = reverse target)
+      reverseOutcome = 'True';
+    }
+    
+    return {
+      ...signal,
+      action: reverseAction,
+      entry: reverseEntry,
+      target: reverseTarget,
+      stopLoss: reverseStopLoss,
+      outcome: reverseOutcome,
+      reason: `Reverse of: ${signal.reason}`,
+      isReverse: true,
+    };
+  });
+}
+
+function buildBuyOnlyReverseSignalRows(signalRows, selectedStrike, oppositeStrikeCandleData = []) {
+  // Buy-only reverse: swap instrument type on BUY, keep type and make BUY on SELL
+  // PE BUY → CE BUY (swap type)
+  // PE SELL → PE BUY (keep type, action BUY)
+  // CE BUY → PE BUY (swap type)
+  // CE SELL → CE BUY (keep type, action BUY)
+  // Target/Stop Loss logic: same as Reverse Combined Signals (opposite levels)
+  // Entry Price: Actual price of opposite strike at signal time
+  // Exit Price: Actual price of opposite strike at exit time (when original hit target/SL)
+  
+  if (!selectedStrike || !selectedStrike.type) return [];
+  
+  const currentType = selectedStrike.type; // 'PE' or 'CE'
+  
+  return signalRows.map(signal => {
+    let reverseType;
+    let reverseAction = 'BUY'; // Always BUY in this table
+    
+    if (signal.action === 'BUY') {
+      // For BUY: swap the instrument type
+      reverseType = currentType === 'PE' ? 'CE' : 'PE';
+    } else {
+      // For SELL: keep same instrument type, but make action BUY
+      reverseType = currentType;
+    }
+    
+    // Find the actual entry price of opposite strike at signal time
+    let reverseEntry = signal.entry; // Fallback to original entry
+    if (oppositeStrikeCandleData.length > 0) {
+      // Find candle at or closest to signal time
+      const signalCandle = oppositeStrikeCandleData.find(candle => candle.x === signal.time);
+      if (signalCandle) {
+        reverseEntry = signalCandle.c; // Use closing price of opposite strike at signal time
+      }
+    }
+    
+    // Find the actual exit price of opposite strike at exit time
+    // When original signal exits (hits target or stop loss), we use opposite strike's price at that time
+    let reverseExitPrice = signal.entry; // Fallback
+    if (signal.outcome === 'True' || signal.outcome === 'False') {
+      // Signal has completed, find the exit candle time from closedAt
+      if (oppositeStrikeCandleData.length > 0 && signal.closedAt) {
+        const exitCandle = oppositeStrikeCandleData.find(candle => candle.x === signal.closedAt);
+        if (exitCandle) {
+          reverseExitPrice = exitCandle.c;
+        }
+      }
+    }
+    
+    // Target/Stop Loss logic similar to Reverse Combined Signals:
+    // Entry = actual opposite strike entry (where reverse trade starts)
+    // Target = original stopLoss (profit target of reverse = where original stops out)
+    // StopLoss = original target (loss point of reverse = where original takes profit)
+    const reverseTarget = signal.stopLoss;
+    const reverseStopLoss = signal.target;
+    
+    // Outcome mapping: same as Reverse Combined Signals
+    // If original hit target (profit), reverse hits stopLoss (loss)
+    // If original hit stopLoss (loss), reverse hits target (profit)
+    let reverseOutcome = signal.outcome; // Pending initially
+    if (signal.outcome === 'True') {
+      // Original won, so reverse loses (original target = reverse stopLoss)
+      reverseOutcome = 'False';
+    } else if (signal.outcome === 'False') {
+      // Original lost, so reverse wins (original stopLoss = reverse target)
+      reverseOutcome = 'True';
+    }
+    
+    return {
+      ...signal,
+      action: reverseAction,
+      entry: reverseEntry,
+      target: reverseTarget,
+      stopLoss: reverseStopLoss,
+      outcome: reverseOutcome,
+      reverseExitPrice: reverseExitPrice, // Store actual exit price of opposite strike
+      reverseInstrumentType: reverseType,
+      reason: `Buy-only reverse: ${signal.action === 'BUY' ? `Buy ${reverseType} instead of ${signal.action} ${currentType}` : `Buy ${currentType} instead of ${signal.action}`} | ${signal.reason}`,
+      isBuyOnlyReverse: true,
+    };
+  });
+}
+
 function PCRAnalysis({ apiKey }) {
   const [pcrData, setPcrData] = useState(null);
   const [nifty50Data, setNifty50Data] = useState(null);
@@ -830,8 +982,11 @@ function PCRAnalysis({ apiKey }) {
   const [autoTradingBusy, setAutoTradingBusy] = useState(false);
   const [submittedAutoSignalKey, setSubmittedAutoSignalKey] = useState('');
   const [signalRows, setSignalRows] = useState([]);
+  const [reverseSignalRows, setReverseSignalRows] = useState([]);
+  const [buyOnlyReverseSignalRows, setBuyOnlyReverseSignalRows] = useState([]);
   const [signalFilter, setSignalFilter] = useState('ALL');
-  const [dayFilter, setDayFilter] = useState('ALL'); // NEW: Day-wise filter
+  const [dayFilter, setDayFilter] = useState(new Date().toLocaleDateString('en-IN', { year: 'numeric', month: '2-digit', day: '2-digit' })); // Default to current day
+  const [oppositeStrikeCandleData, setOppositeStrikeCandleData] = useState([]); // Store opposite strike candles for buy-only reverse
   const candleChartRef = React.useRef(null);
   const chartSeriesRef = React.useRef(null);
   const ema10SeriesRef = React.useRef(null);
@@ -1005,6 +1160,16 @@ function PCRAnalysis({ apiKey }) {
     }
   }, [signalRows, dayFilter]);
 
+  // Generate reverse signals from signal rows
+  useEffect(() => {
+    setReverseSignalRows(buildReverseSignalRows(signalRows));
+  }, [signalRows]);
+
+  // Generate buy-only reverse signals from signal rows
+  useEffect(() => {
+    setBuyOnlyReverseSignalRows(buildBuyOnlyReverseSignalRows(signalRows, selectedStrike, oppositeStrikeCandleData));
+  }, [signalRows, selectedStrike, oppositeStrikeCandleData]);
+
   const fetchRealPCR = async (strike) => {
     if (!strike?.instrumentToken) return;
     try {
@@ -1134,6 +1299,32 @@ function PCRAnalysis({ apiKey }) {
         setTradeSignal(currentSignal);
         setAutoTradePlan(calculateCurrentTradePlan(decisionCandleData, currentSignal));
         setSignalRows(buildSignalRows(decisionCandleData, oneMinuteMode, fiveMinuteCandleData, threeMinuteCandleData));
+        
+        // Fetch opposite strike candle data for buy-only reverse signals
+        try {
+          const oppositeType = strike.type === 'PE' ? 'CE' : 'PE';
+          const oppositeStrike = strikeOptions.find(
+            option => option.strike === strike.strike 
+              && option.expiry === strike.expiry 
+              && option.type === oppositeType
+          );
+          
+          if (oppositeStrike?.instrumentToken) {
+            const oppositeCandles = await kiteAPI.getHistoricalData({
+              instrumentToken: oppositeStrike.instrumentToken,
+              interval,
+              from: formatDateTime(from, '09:15:00'),
+              to: formatDateTime(to, '23:59:59'),
+            });
+            const oppositeNormalized = Array.isArray(oppositeCandles) ? oppositeCandles : [];
+            const oppositeCandleData = toCandleData(oppositeNormalized);
+            setOppositeStrikeCandleData(oppositeCandleData);
+          }
+        } catch (err) {
+          console.error('Failed to fetch opposite strike data:', err);
+          setOppositeStrikeCandleData([]);
+        }
+        
       setCloseChartData({
         datasets: [{
           label: `${strike.label} close • ${interval}`,
@@ -1426,6 +1617,80 @@ function PCRAnalysis({ apiKey }) {
     return total + ((priceMove * lotSize) - cost.totalCharges);
   }, 0);
   const pendingInvestment = filteredSignalRows
+    .filter(signal => signal.outcome === 'Pending')
+    .reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
+
+  // Reverse signals filtering and calculations
+  const filteredReverseSignalRows = reverseSignalRows.filter(signal => {
+    const actionMatch = signalFilter === 'ALL' || signal.action === signalFilter;
+    if (!actionMatch) return false;
+    
+    if (dayFilter === 'ALL') return true;
+    const signalDate = new Date(signal.time).toLocaleDateString('en-IN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+    return signalDate === dayFilter;
+  });
+
+  const evaluatedReverseSignals = filteredReverseSignalRows.filter(signal => signal.outcome === 'True' || signal.outcome === 'False');
+  const successfulReverseSignals = evaluatedReverseSignals.filter(signal => signal.outcome === 'True');
+  const reverseOverallSuccess = evaluatedReverseSignals.length > 0
+    ? (successfulReverseSignals.length / evaluatedReverseSignals.length) * 100
+    : 0;
+  const latestReverseSignalTradeCost = filteredReverseSignalRows.length > 0
+    ? tradeCostForSignal(filteredReverseSignalRows[0])
+    : null;
+  const reverseWinAmount = evaluatedReverseSignals
+    .filter(signal => signal.outcome === 'True')
+    .reduce((total, signal) => total + (Math.abs(signal.target - signal.entry) * lotSize) + tradeCostForSignal(signal).totalCharges, 0);
+  const reverseLossAmount = evaluatedReverseSignals
+    .filter(signal => signal.outcome === 'False')
+    .reduce((total, signal) => total + (Math.abs(signal.stopLoss - signal.entry) * lotSize) + tradeCostForSignal(signal).totalCharges, 0);
+  const reverseWinAmountPercent = (reverseWinAmount + reverseLossAmount) > 0 ? (reverseWinAmount / (reverseWinAmount + reverseLossAmount)) * 100 : 0;
+  const reverseRealizedInvestment = evaluatedReverseSignals.reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
+  const reverseRealizedProfitLoss = evaluatedReverseSignals.reduce((total, signal) => {
+    const priceMove = signal.outcome === 'True'
+      ? Math.abs(signal.target - signal.entry)
+      : -Math.abs(signal.stopLoss - signal.entry);
+    const cost = tradeCostForSignal(signal);
+    return total + ((priceMove * lotSize) - cost.totalCharges);
+  }, 0);
+  const reversePendingInvestment = filteredReverseSignalRows
+    .filter(signal => signal.outcome === 'Pending')
+    .reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
+
+  // Buy-only reverse signals filtering and calculations
+  const filteredBuyOnlyReverseSignalRows = buyOnlyReverseSignalRows.filter(signal => {
+    const actionMatch = 'BUY' === 'ALL' || 'BUY' === signalFilter; // Always BUY in this table
+    if (!actionMatch && signalFilter !== 'ALL') return false;
+    
+    if (dayFilter === 'ALL') return true;
+    const signalDate = new Date(signal.time).toLocaleDateString('en-IN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+    return signalDate === dayFilter;
+  });
+
+  const evaluatedBuyOnlyReverseSignals = filteredBuyOnlyReverseSignalRows.filter(signal => signal.outcome === 'True' || signal.outcome === 'False');
+  const successfulBuyOnlyReverseSignals = evaluatedBuyOnlyReverseSignals.filter(signal => signal.outcome === 'True');
+  const buyOnlyReverseOverallSuccess = evaluatedBuyOnlyReverseSignals.length > 0
+    ? (successfulBuyOnlyReverseSignals.length / evaluatedBuyOnlyReverseSignals.length) * 100
+    : 0;
+  const latestBuyOnlyReverseSignalTradeCost = filteredBuyOnlyReverseSignalRows.length > 0
+    ? tradeCostForSignal(filteredBuyOnlyReverseSignalRows[0])
+    : null;
+  const buyOnlyReverseWinAmount = evaluatedBuyOnlyReverseSignals
+    .filter(signal => signal.outcome === 'True')
+    .reduce((total, signal) => total + (Math.abs(signal.target - signal.entry) * lotSize) + tradeCostForSignal(signal).totalCharges, 0);
+  const buyOnlyReverseLossAmount = evaluatedBuyOnlyReverseSignals
+    .filter(signal => signal.outcome === 'False')
+    .reduce((total, signal) => total + (Math.abs(signal.stopLoss - signal.entry) * lotSize) + tradeCostForSignal(signal).totalCharges, 0);
+  const buyOnlyReverseWinAmountPercent = (buyOnlyReverseWinAmount + buyOnlyReverseLossAmount) > 0 ? (buyOnlyReverseWinAmount / (buyOnlyReverseWinAmount + buyOnlyReverseLossAmount)) * 100 : 0;
+  const buyOnlyReverseRealizedInvestment = evaluatedBuyOnlyReverseSignals.reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
+  const buyOnlyReverseRealizedProfitLoss = evaluatedBuyOnlyReverseSignals.reduce((total, signal) => {
+    const priceMove = signal.outcome === 'True'
+      ? Math.abs(signal.target - signal.entry)
+      : -Math.abs(signal.stopLoss - signal.entry);
+    const cost = tradeCostForSignal(signal);
+    return total + ((priceMove * lotSize) - cost.totalCharges);
+  }, 0);
+  const buyOnlyReversePendingInvestment = filteredBuyOnlyReverseSignalRows
     .filter(signal => signal.outcome === 'Pending')
     .reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
 
@@ -1727,6 +1992,8 @@ function PCRAnalysis({ apiKey }) {
                       <th>Entry</th>
                       <th>Target</th>
                       <th>Stop loss</th>
+                      <th>Exit Price</th>
+                      <th>Profit/Loss Points</th>
                       <th>Success</th>
                       <th>Evaluation</th>
                       <th>Reason</th>
@@ -1751,6 +2018,180 @@ function PCRAnalysis({ apiKey }) {
                           <td>₹{Number(signal.entry).toFixed(2)}</td>
                           <td>₹{Number(signal.target).toFixed(2)}{signal.levelSource && <small>{signal.levelSource}</small>}</td>
                           <td>₹{Number(signal.stopLoss).toFixed(2)}{signal.levelSource && <small>{signal.levelSource}</small>}</td>
+                          <td>₹{Number(signal.outcome === 'True' ? signal.target : signal.outcome === 'False' ? signal.stopLoss : signal.entry).toFixed(2)}</td>
+                          <td className={signal.outcome === 'Pending' ? '' : signal.outcome === 'True' ? 'profit' : 'loss'}>{(signal.action === 'BUY' ? (signal.outcome === 'True' ? signal.target - signal.entry : signal.outcome === 'False' ? signal.stopLoss - signal.entry : 0) : (signal.outcome === 'True' ? signal.entry - signal.target : signal.outcome === 'False' ? signal.entry - signal.stopLoss : 0)).toFixed(2)} pts</td>
+                          <td><span className={`outcome-pill ${signal.outcome.toLowerCase()}`}>{signal.outcome}</span></td>
+                          <td>{signal.evaluation}</td>
+                          <td>{signal.reason}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="signal-table-panel">
+            <div className="signal-table-header">
+              <h3>{selectedInterval === 'minute' ? 'Reverse Combined Signals (1m multi-confirmation)' : 'Reverse Combined Signals'}</h3>
+              <div className="signal-filter-row">
+                <label>
+                  View:
+                  <select value={signalFilter} onChange={(event) => setSignalFilter(event.target.value)}>
+                    <option value="ALL">All</option>
+                    <option value="BUY">Buy only</option>
+                    <option value="SELL">Sell only</option>
+                  </select>
+                </label>
+                <label>
+                  Day:
+                  <select value={dayFilter} onChange={(event) => setDayFilter(event.target.value)}>
+                    <option value="ALL">All Days</option>
+                    {uniqueDays.map(day => (
+                      <option key={day} value={day}>{day}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="signal-summary">
+                <span>{filteredReverseSignalRows.length} reverse decisions | Reverse success: {reverseOverallSuccess.toFixed(1)}%</span>
+                {latestReverseSignalTradeCost && <span>Latest reverse trade cost: ₹{latestReverseSignalTradeCost.totalCashRequired.toFixed(2)} (Premium ₹{latestReverseSignalTradeCost.notional.toFixed(2)} + charges ₹{latestReverseSignalTradeCost.totalCharges.toFixed(2)})</span>}
+                <span>Reverse win amount: {reverseWinAmountPercent.toFixed(1)}% | Reverse investment: ₹{reverseRealizedInvestment.toFixed(2)}</span>
+                <span>Reverse Gross P/L: <b className={reverseRealizedProfitLoss >= 0 ? 'profit' : 'loss'}>{reverseRealizedProfitLoss >= 0 ? '+' : ''}₹{reverseRealizedProfitLoss.toFixed(2)}</b> | Reverse pending: ₹{reversePendingInvestment.toFixed(2)} | Lot size: {lotSize}</span>
+              </div>
+            </div>
+            {filteredReverseSignalRows.length === 0 ? (
+              <div className="signal-table-empty">No {signalFilter === 'ALL' ? 'reverse BUY/SELL confirmation' : `reverse ${signalFilter.toLowerCase()} signal`} {dayFilter !== 'ALL' ? `for ${dayFilter}` : 'in this range'}.</div>
+            ) : (
+              <div className="signal-table-scroll">
+                <table className="signal-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Reverse Action</th>
+                      <th>Entry Price</th>
+                      <th>Trade Cost</th>
+                      <th>Candlestick</th>
+                      <th>Chart pattern</th>
+                      {selectedInterval === 'minute' && <th>1m Chart Structure</th>}
+                      {selectedInterval === 'minute' && <th>3m Chart Structure</th>}
+                      {selectedInterval === 'minute' && <th>5m Chart Structure</th>}
+                      {selectedInterval === 'minute' && <th>1m EMA 10/20</th>}
+                      <th>Entry</th>
+                      <th>Target (Original SL)</th>
+                      <th>Stop loss (Original Target)</th>
+                      <th>Exit Price</th>
+                      <th>Profit/Loss Points</th>
+                      <th>Result</th>
+                      <th>Evaluation</th>
+                      <th>Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredReverseSignalRows.map((signal, index) => {
+                      const parts = signal.pattern.split(' | ');
+                      const tradeCost = tradeCostForSignal(signal);
+                      return (
+                        <tr key={`reverse-${signal.time}-${index}`}>
+                          <td>{new Date(signal.time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
+                          <td><span className={`signal-pill ${signal.action.toLowerCase()}`}>{signal.action}</span></td>
+                          <td>₹{Number(signal.entry).toFixed(2)}</td>
+                          <td>₹{tradeCost.totalCashRequired.toFixed(2)}<small>Premium ₹{tradeCost.notional.toFixed(2)} + fees ₹{tradeCost.totalCharges.toFixed(2)}</small></td>
+                          <td>{parts[0].replace('Liquidity sweep + ', '').replace('Institutional ', '')}</td>
+                          <td>{parts[1] || 'Confirmed structure'}</td>
+                          {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.chart || 'No chart structure confirmation'}</td>}
+                          {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.threeMinuteChart || 'No 3m chart structure confirmation'}</td>}
+                          {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.fiveMinuteChart || 'No 5m chart structure confirmation'}</td>}
+                          {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.emaStatus || 'EMA confirmation unavailable'}<small>{signal.minuteConfirmation?.ema || ''}</small></td>}
+                          <td>₹{Number(signal.entry).toFixed(2)}</td>
+                          <td>₹{Number(signal.target).toFixed(2)}<small>Hit when original SL hit</small></td>
+                          <td>₹{Number(signal.stopLoss).toFixed(2)}<small>Hit when original target hit</small></td>
+                          <td>₹{Number(signal.outcome === 'True' ? signal.target : signal.outcome === 'False' ? signal.stopLoss : signal.entry).toFixed(2)}</td>
+                          <td className={signal.outcome === 'Pending' ? '' : signal.outcome === 'True' ? 'profit' : 'loss'}>{(signal.action === 'SELL' ? (signal.outcome === 'True' ? signal.entry - signal.target : signal.outcome === 'False' ? signal.entry - signal.stopLoss : 0) : (signal.outcome === 'True' ? signal.target - signal.entry : signal.outcome === 'False' ? signal.stopLoss - signal.entry : 0)).toFixed(2)} pts</td>
+                          <td><span className={`outcome-pill ${signal.outcome.toLowerCase()}`}>{signal.outcome}</span></td>
+                          <td>{signal.evaluation}</td>
+                          <td>{signal.reason}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="signal-table-panel">
+            <div className="signal-table-header">
+              <h3>{selectedInterval === 'minute' ? 'Buy Only Reverse Combined Signals (1m multi-confirmation)' : 'Buy Only Reverse Combined Signals'}</h3>
+              <div className="signal-filter-row">
+                <label>
+                  Day:
+                  <select value={dayFilter} onChange={(event) => setDayFilter(event.target.value)}>
+                    <option value="ALL">All Days</option>
+                    {uniqueDays.map(day => (
+                      <option key={day} value={day}>{day}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="signal-summary">
+                <span>{filteredBuyOnlyReverseSignalRows.length} buy-only reverse decisions | Buy-only reverse success: {buyOnlyReverseOverallSuccess.toFixed(1)}%</span>
+                {latestBuyOnlyReverseSignalTradeCost && <span>Latest buy-only reverse trade cost: ₹{latestBuyOnlyReverseSignalTradeCost.totalCashRequired.toFixed(2)} (Premium ₹{latestBuyOnlyReverseSignalTradeCost.notional.toFixed(2)} + charges ₹{latestBuyOnlyReverseSignalTradeCost.totalCharges.toFixed(2)})</span>}
+                <span>Buy-only reverse win amount: {buyOnlyReverseWinAmountPercent.toFixed(1)}% | Buy-only reverse investment: ₹{buyOnlyReverseRealizedInvestment.toFixed(2)}</span>
+                <span>Buy-only reverse Gross P/L: <b className={buyOnlyReverseRealizedProfitLoss >= 0 ? 'profit' : 'loss'}>{buyOnlyReverseRealizedProfitLoss >= 0 ? '+' : ''}₹{buyOnlyReverseRealizedProfitLoss.toFixed(2)}</b> | Buy-only reverse pending: ₹{buyOnlyReversePendingInvestment.toFixed(2)} | Lot size: {lotSize}</span>
+              </div>
+            </div>
+            {filteredBuyOnlyReverseSignalRows.length === 0 ? (
+              <div className="signal-table-empty">No buy-only reverse signals {dayFilter !== 'ALL' ? `for ${dayFilter}` : 'in this range'}.</div>
+            ) : (
+              <div className="signal-table-scroll">
+                <table className="signal-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Action (Always BUY)</th>
+                      <th>Instrument Type</th>
+                      <th>Entry Price</th>
+                      <th>Trade Cost</th>
+                      <th>Candlestick</th>
+                      <th>Chart pattern</th>
+                      {selectedInterval === 'minute' && <th>1m Chart Structure</th>}
+                      {selectedInterval === 'minute' && <th>3m Chart Structure</th>}
+                      {selectedInterval === 'minute' && <th>5m Chart Structure</th>}
+                      {selectedInterval === 'minute' && <th>1m EMA 10/20</th>}
+                      <th>Entry</th>
+                      <th>Target (Original SL)</th>
+                      <th>Stop loss (Original Target)</th>
+                      <th>Exit Price</th>
+                      <th>Profit/Loss Points</th>
+                      <th>Result</th>
+                      <th>Evaluation</th>
+                      <th>Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredBuyOnlyReverseSignalRows.map((signal, index) => {
+                      const parts = signal.pattern.split(' | ');
+                      const tradeCost = tradeCostForSignal(signal);
+                      return (
+                        <tr key={`buy-only-reverse-${signal.time}-${index}`}>
+                          <td>{new Date(signal.time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
+                          <td><span className={`signal-pill ${signal.action.toLowerCase()}`}>{signal.action}</span></td>
+                          <td><strong>{signal.reverseInstrumentType}</strong><small>Opposite to {selectedStrike?.type}</small></td>
+                          <td>₹{Number(signal.entry).toFixed(2)}</td>
+                          <td>₹{tradeCost.totalCashRequired.toFixed(2)}<small>Premium ₹{tradeCost.notional.toFixed(2)} + fees ₹{tradeCost.totalCharges.toFixed(2)}</small></td>
+                          <td>{parts[0].replace('Liquidity sweep + ', '').replace('Institutional ', '')}</td>
+                          <td>{parts[1] || 'Confirmed structure'}</td>
+                          {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.chart || 'No chart structure confirmation'}</td>}
+                          {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.threeMinuteChart || 'No 3m chart structure confirmation'}</td>}
+                          {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.fiveMinuteChart || 'No 5m chart structure confirmation'}</td>}
+                          {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.emaStatus || 'EMA confirmation unavailable'}<small>{signal.minuteConfirmation?.ema || ''}</small></td>}
+                          <td>₹{Number(signal.entry).toFixed(2)}</td>
+                          <td>₹{Number(signal.target).toFixed(2)}<small>Hit when original SL hit</small></td>
+                          <td>₹{Number(signal.stopLoss).toFixed(2)}<small>Hit when original target hit</small></td>
+                          <td>₹{Number(signal.reverseExitPrice || signal.entry).toFixed(2)}</td>
+                          <td className={signal.outcome === 'Pending' ? '' : signal.reverseExitPrice - signal.entry >= 0 ? 'profit' : 'loss'}>{(signal.reverseExitPrice ? signal.reverseExitPrice - signal.entry : 0).toFixed(2)} pts</td>
                           <td><span className={`outcome-pill ${signal.outcome.toLowerCase()}`}>{signal.outcome}</span></td>
                           <td>{signal.evaluation}</td>
                           <td>{signal.reason}</td>
