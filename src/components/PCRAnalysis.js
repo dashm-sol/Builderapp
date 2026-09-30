@@ -97,11 +97,11 @@ function detectCandlestickPatterns(candles, index) {
   const pinBarThreshold = range * 0.3;
   if (isBull && lowerWick >= body * 3 && upperWick <= body * 0.5) bullish.push('Pin bar up');
   if (isBear && upperWick >= body * 3 && lowerWick <= body * 0.5) bearish.push('Pin bar down');
-  
+
   // Strong Reversal (opposite to previous trend with conviction)
   if (previous && previous.c < previous.o && isBull && body >= previousBody * 1.5) bullish.push('Strong reversal up');
   if (previous && previous.c > previous.o && isBear && body >= previousBody * 1.5) bearish.push('Strong reversal down');
-  
+
   // Break of Previous Candle (aggressive directional move)
   if (isBull && current.c > previous.h && body >= range * 0.6) bullish.push('Break above previous');
   if (isBear && current.c < previous.l && body >= range * 0.6) bearish.push('Break below previous');
@@ -115,7 +115,7 @@ function detectCandlestickPatterns(candles, index) {
     if (current.h > previous.h && current.l < previous.l) neutral.push('Outside bar');
     if (isBull && previous.c < previous.o && current.o > previous.o && current.c < previous.c) bearish.push('Bearish harami');
     if (isBear && previous.c > previous.o && current.o < previous.o && current.c > previous.c) bullish.push('Bullish harami');
-    
+
     if (threeBack) {
       const threeBackBear = threeBack.c < threeBack.o;
       const threeBackBull = threeBack.c > threeBack.o;
@@ -138,7 +138,7 @@ function findChartPatterns(candles, isOneMinute = false) {
   const recent = candles.slice(-40);
   const highs = recent.filter((candle, index) => index > 0 && index < recent.length - 1 && candle.h >= recent[index - 1].h && candle.h >= recent[index + 1].h);
   const lows = recent.filter((candle, index) => index > 0 && index < recent.length - 1 && candle.l <= recent[index - 1].l && candle.l <= recent[index + 1].l);
-  
+
   // For 1-minute trading, use tighter tolerance (0.5% instead of 1%)
   const tolerance = isOneMinute ? 0.005 : 0.01;
   const matchLevel = (items, field) => items.length >= 2 && Math.abs(items.at(-1)[field] - items.at(-2)[field]) / Math.max(items.at(-2)[field], 0.0001) < tolerance;
@@ -242,15 +242,15 @@ function classifyChartPatterns(patterns) {
 // 1-MINUTE ONLY: Detect 8 specific breakout patterns with entry and stop levels
 function detectOneMinuteBreakoutPatterns(candles) {
   if (candles.length < 30) return { bullish: [], bearish: [], breakoutLevels: {} };
-  
+
   const recent = candles.slice(-40);
   const highs = recent.filter((c, i) => i > 0 && i < recent.length - 1 && c.h >= recent[i - 1].h && c.h >= recent[i + 1].h);
   const lows = recent.filter((c, i) => i > 0 && i < recent.length - 1 && c.l <= recent[i - 1].l && c.l <= recent[i + 1].l);
-  
+
   const bullish = [];
   const bearish = [];
   const breakoutLevels = {};
-  
+
   // 1. DOUBLE BOTTOM: Two lows at similar level, breakout above middle peak
   if (lows.length >= 2) {
     const lastLow = lows.at(-1).l;
@@ -266,7 +266,7 @@ function detectOneMinuteBreakoutPatterns(candles) {
       };
     }
   }
-  
+
   // 2. INVERSE HEAD & SHOULDERS: Trough, Higher trough, Lower trough, neckline
   if (lows.length >= 3) {
     const leftShoulder = lows.at(-3).l;
@@ -282,7 +282,7 @@ function detectOneMinuteBreakoutPatterns(candles) {
       };
     }
   }
-  
+
   // 3. ASCENDING TRIANGLE: Rising lows, flat resistance
   if (lows.length >= 2) {
     const lastLow = lows.at(-1).l;
@@ -301,7 +301,7 @@ function detectOneMinuteBreakoutPatterns(candles) {
       }
     }
   }
-  
+
   // 4. BULLISH FLAG: Pole up, consolidation below, breakout
   const first = recent[0].c;
   const mid = recent[Math.floor(recent.length / 2)].c;
@@ -321,7 +321,7 @@ function detectOneMinuteBreakoutPatterns(candles) {
       };
     }
   }
-  
+
   // 5. HEAD & SHOULDERS: Peak, Higher peak, Lower peak, neckline
   if (highs.length >= 3) {
     const leftShoulder = highs.at(-3).h;
@@ -337,7 +337,7 @@ function detectOneMinuteBreakoutPatterns(candles) {
       };
     }
   }
-  
+
   // 6. DOUBLE TOP: Two highs at similar level, breakout below middle valley
   if (highs.length >= 2) {
     const lastHigh = highs.at(-1).h;
@@ -353,7 +353,7 @@ function detectOneMinuteBreakoutPatterns(candles) {
       };
     }
   }
-  
+
   // 7. BEARISH FLAG: Pole down, consolidation above, breakout
   if (mid < first && last < first) { // Downtrend exists
     const flagStart = Math.floor(recent.length / 2);
@@ -370,7 +370,7 @@ function detectOneMinuteBreakoutPatterns(candles) {
       };
     }
   }
-  
+
   // 8. DESCENDING TRIANGLE: Falling highs, flat support
   if (highs.length >= 2) {
     const lastHigh = highs.at(-1).h;
@@ -389,18 +389,18 @@ function detectOneMinuteBreakoutPatterns(candles) {
       }
     }
   }
-  
+
   return { bullish, bearish, breakoutLevels };
 }
 
 // Detect high-probability 1-minute specific patterns for scalping/intraday
 function detectOneMinutePatterns(candles) {
   if (candles.length < 10) return { bullish: [], bearish: [] };
-  
+
   const recent = candles.slice(-15); // Last 15 candles for 1-minute analysis
   const bullish = [];
   const bearish = [];
-  
+
   // 1. Consolidation Breakout (narrow range followed by break)
   const midpoint = Math.floor(recent.length / 2);
   const consolidationZone = recent.slice(0, midpoint);
@@ -410,35 +410,35 @@ function detectOneMinutePatterns(candles) {
   const consolRange = consolHigh - consolLow;
   const breakHigh = Math.max(...breakoutZone.map(c => c.h));
   const breakLow = Math.min(...breakoutZone.map(c => c.l));
-  
+
   if (consolRange < Math.max(...recent.map(c => c.h - c.l)) * 0.8) {
     if (breakHigh > consolHigh) bullish.push('Consolidation breakout up');
     if (breakLow < consolLow) bearish.push('Consolidation breakout down');
   }
-  
+
   // 2. Momentum Surge (series of candles moving in same direction with increasing body size)
   const last3 = recent.slice(-3);
   const last3Bodies = last3.map(c => Math.abs(c.c - c.o));
   const bullish3 = last3.every(c => c.c > c.o) && last3Bodies[1] > last3Bodies[0] && last3Bodies[2] > last3Bodies[1];
   const bearish3 = last3.every(c => c.c < c.o) && last3Bodies[1] > last3Bodies[0] && last3Bodies[2] > last3Bodies[1];
-  
+
   if (bullish3) bullish.push('Momentum surge up');
   if (bearish3) bearish.push('Momentum surge down');
-  
+
   // 3. Support/Resistance Bounce (rejected at level, bouncing back)
   const last5 = recent.slice(-5);
   const low5 = Math.min(...last5.map(c => c.l));
   const high5 = Math.max(...last5.map(c => c.h));
   const lastCandle = recent.at(-1);
   const secondLast = recent.at(-2);
-  
+
   if (secondLast && lastCandle.l >= low5 && lastCandle.c > lastCandle.o && lastCandle.c > secondLast.c) {
     bullish.push('Support bounce');
   }
   if (secondLast && lastCandle.h <= high5 && lastCandle.c < lastCandle.o && lastCandle.c < secondLast.c) {
     bearish.push('Resistance rejection');
   }
-  
+
   // 4. Higher Highs & Higher Lows (Uptrend) / Lower Highs & Lower Lows (Downtrend)
   if (recent.length >= 4) {
     const prev2 = recent.slice(-4, -2);
@@ -447,11 +447,11 @@ function detectOneMinutePatterns(candles) {
     const prevLow = Math.min(...prev2.map(c => c.l));
     const currHigh = Math.max(...curr2.map(c => c.h));
     const currLow = Math.min(...curr2.map(c => c.l));
-    
+
     if (currHigh > prevHigh && currLow > prevLow) bullish.push('Higher highs and lows');
     if (currHigh < prevHigh && currLow < prevLow) bearish.push('Lower highs and lows');
   }
-  
+
   // 5. Gap Continuation (gap in direction of trend)
   if (recent.length >= 2) {
     const prev = recent.at(-2);
@@ -459,7 +459,7 @@ function detectOneMinutePatterns(candles) {
     if (curr.o > prev.h && curr.c > curr.o) bullish.push('Gap continuation up');
     if (curr.o < prev.l && curr.c < curr.o) bearish.push('Gap continuation down');
   }
-  
+
   return { bullish, bearish };
 }
 
@@ -484,7 +484,7 @@ function calculateInstitutionalTradeSignal(candles) {
   }
   const recent = candles.slice(-40);
   const chartPatterns = classifyChartPatterns(findChartPatterns(recent, false));
-  
+
   if (chartPatterns.bullish.length > 0) {
     return {
       action: 'BUY',
@@ -492,7 +492,7 @@ function calculateInstitutionalTradeSignal(candles) {
       reason: `Bullish chart patterns detected: ${chartPatterns.bullish.join(', ')}`,
     };
   }
-  
+
   if (chartPatterns.bearish.length > 0) {
     return {
       action: 'SELL',
@@ -500,7 +500,7 @@ function calculateInstitutionalTradeSignal(candles) {
       reason: `Bearish chart patterns detected: ${chartPatterns.bearish.join(', ')}`,
     };
   }
-  
+
   return {
     action: 'HOLD',
     pattern: 'No chart patterns detected',
@@ -523,11 +523,11 @@ function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = [], threeMin
   if (patterns.bullish.length > 0) {
     const patternName = patterns.bullish[0];
     const levels = patterns.breakoutLevels[patternName];
-    
+
     // Calculate target to check if it's same as entry
     const risk = levels.entry - levels.stopLoss;
     const target = levels.entry + (risk * 2);
-    
+
     // Ignore if entry and target are same
     if (Math.abs(target - levels.entry) < 0.01) {
       return {
@@ -537,7 +537,7 @@ function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = [], threeMin
         isOneMinuteTrade: true,
       };
     }
-    
+
     return {
       action: 'BUY',
       pattern: `Breakout: ${patternName}`,
@@ -551,11 +551,11 @@ function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = [], threeMin
   if (patterns.bearish.length > 0) {
     const patternName = patterns.bearish[0];
     const levels = patterns.breakoutLevels[patternName];
-    
+
     // Calculate target to check if it's same as entry
     const risk = levels.stopLoss - levels.entry;
     const target = levels.entry - (risk * 2);
-    
+
     // Ignore if entry and target are same
     if (Math.abs(target - levels.entry) < 0.01) {
       return {
@@ -565,7 +565,7 @@ function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = [], threeMin
         isOneMinuteTrade: true,
       };
     }
-    
+
     return {
       action: 'SELL',
       pattern: `Breakout: ${patternName}`,
@@ -604,7 +604,7 @@ function calculateTradeSignal(candles, oneMinuteMode = false, fiveMinuteCandles 
 function calculateTradeLevels(candles, signal, oneMinuteMode = false) {
   const signalCandle = candles.at(-1);
   const entry = signalCandle.c;
-  
+
   if (!oneMinuteMode) {
     const recent = candles.slice(-20);
     const recentLow = Math.min(...recent.map(candle => candle.l));
@@ -619,7 +619,7 @@ function calculateTradeLevels(candles, signal, oneMinuteMode = false) {
   // 1-MINUTE: USE PATTERN-BASED BREAKOUT LEVELS
   if (signal.breakoutLevels) {
     const { entry: patternEntry, stopLoss: patternStop, type } = signal.breakoutLevels;
-    
+
     if (signal.action === 'BUY') {
       const risk = patternEntry - patternStop;
       // Target: 2x risk from entry (institutional 1:2 ratio)
@@ -651,12 +651,12 @@ function calculateTradeLevels(candles, signal, oneMinuteMode = false) {
   const window = candles.slice(-40);
   const windowHigh = Math.max(...window.map(c => c.h));
   const windowLow = Math.min(...window.map(c => c.l));
-  
+
   if (signal.action === 'BUY') {
     const stopLoss = windowLow;
     const target = windowHigh;
     const risk = entry - stopLoss;
-    
+
     return {
       entry,
       target,
@@ -670,7 +670,7 @@ function calculateTradeLevels(candles, signal, oneMinuteMode = false) {
     const stopLoss = windowHigh;
     const target = windowLow;
     const risk = stopLoss - entry;
-    
+
     return {
       entry,
       target,
@@ -845,7 +845,7 @@ function buildReverseSignalRows(signalRows) {
   // Reverse signal exits when original signal's target or stop loss is hit
   return signalRows.map(signal => {
     const reverseAction = signal.action === 'BUY' ? 'SELL' : 'BUY';
-    
+
     // For reverse signal:
     // Entry = original entry (where we reverse trade starts)
     // Target = original stopLoss (profit target of reverse = where original stops out)
@@ -853,7 +853,7 @@ function buildReverseSignalRows(signalRows) {
     const reverseEntry = signal.entry;
     const reverseTarget = signal.stopLoss;
     const reverseStopLoss = signal.target;
-    
+
     // Determine outcome based on original signal's outcome
     // If original hit target (profit), reverse hits stopLoss (loss)
     // If original hit stopLoss (loss), reverse hits target (profit)
@@ -865,7 +865,7 @@ function buildReverseSignalRows(signalRows) {
       // Original lost, so reverse wins (original stopLoss = reverse target)
       reverseOutcome = 'True';
     }
-    
+
     return {
       ...signal,
       action: reverseAction,
@@ -879,87 +879,19 @@ function buildReverseSignalRows(signalRows) {
   });
 }
 
-function buildBuyOnlyReverseSignalRows(signalRows, selectedStrike, oppositeStrikeCandleData = []) {
-  // Buy-only reverse: swap instrument type on BUY, keep type and make BUY on SELL
-  // PE BUY → CE BUY (swap type)
-  // PE SELL → PE BUY (keep type, action BUY)
-  // CE BUY → PE BUY (swap type)
-  // CE SELL → CE BUY (keep type, action BUY)
-  // Target/Stop Loss logic: same as Reverse Combined Signals (opposite levels)
-  // Entry Price: Actual price of opposite strike at signal time
-  // Exit Price: Actual price of opposite strike at exit time (when original hit target/SL)
-  
-  if (!selectedStrike || !selectedStrike.type) return [];
-  
-  const currentType = selectedStrike.type; // 'PE' or 'CE'
-  
-  return signalRows.map(signal => {
-    let reverseType;
-    let reverseAction = 'BUY'; // Always BUY in this table
-    
-    if (signal.action === 'BUY') {
-      // For BUY: swap the instrument type
-      reverseType = currentType === 'PE' ? 'CE' : 'PE';
-    } else {
-      // For SELL: keep same instrument type, but make action BUY
-      reverseType = currentType;
-    }
-    
-    // Find the actual entry price of opposite strike at signal time
-    let reverseEntry = signal.entry; // Fallback to original entry
-    if (oppositeStrikeCandleData.length > 0) {
-      // Find candle at or closest to signal time
-      const signalCandle = oppositeStrikeCandleData.find(candle => candle.x === signal.time);
-      if (signalCandle) {
-        reverseEntry = signalCandle.c; // Use closing price of opposite strike at signal time
-      }
-    }
-    
-    // Find the actual exit price of opposite strike at exit time
-    // When original signal exits (hits target or stop loss), we use opposite strike's price at that time
-    let reverseExitPrice = signal.entry; // Fallback
-    if (signal.outcome === 'True' || signal.outcome === 'False') {
-      // Signal has completed, find the exit candle time from closedAt
-      if (oppositeStrikeCandleData.length > 0 && signal.closedAt) {
-        const exitCandle = oppositeStrikeCandleData.find(candle => candle.x === signal.closedAt);
-        if (exitCandle) {
-          reverseExitPrice = exitCandle.c;
-        }
-      }
-    }
-    
-    // Target/Stop Loss logic similar to Reverse Combined Signals:
-    // Entry = actual opposite strike entry (where reverse trade starts)
-    // Target = original stopLoss (profit target of reverse = where original stops out)
-    // StopLoss = original target (loss point of reverse = where original takes profit)
-    const reverseTarget = signal.stopLoss;
-    const reverseStopLoss = signal.target;
-    
-    // Outcome mapping: same as Reverse Combined Signals
-    // If original hit target (profit), reverse hits stopLoss (loss)
-    // If original hit stopLoss (loss), reverse hits target (profit)
-    let reverseOutcome = signal.outcome; // Pending initially
-    if (signal.outcome === 'True') {
-      // Original won, so reverse loses (original target = reverse stopLoss)
-      reverseOutcome = 'False';
-    } else if (signal.outcome === 'False') {
-      // Original lost, so reverse wins (original stopLoss = reverse target)
-      reverseOutcome = 'True';
-    }
-    
-    return {
-      ...signal,
-      action: reverseAction,
-      entry: reverseEntry,
-      target: reverseTarget,
-      stopLoss: reverseStopLoss,
-      outcome: reverseOutcome,
-      reverseExitPrice: reverseExitPrice, // Store actual exit price of opposite strike
-      reverseInstrumentType: reverseType,
-      reason: `Buy-only reverse: ${signal.action === 'BUY' ? `Buy ${reverseType} instead of ${signal.action} ${currentType}` : `Buy ${currentType} instead of ${signal.action}`} | ${signal.reason}`,
-      isBuyOnlyReverse: true,
-    };
-  });
+// Helper function to generate signal key for locking
+function getSignalKey(signal) {
+  return `${signal.action}-${Math.floor(signal.time / 60000)}`; // action + minute timestamp
+}
+
+// Helper function to update signal exit details
+function updateSignalExit(signal, exitPrice, outcome) {
+  return {
+    ...signal,
+    exitPrice: exitPrice,
+    outcome: outcome, // 'True' if hit target, 'False' if hit SL, 'Pending' if still open
+    evaluation: outcome === 'Pending' ? 'Awaiting outcome' : outcome === 'True' ? 'Profit' : 'Loss',
+  };
 }
 
 function PCRAnalysis({ apiKey }) {
@@ -969,9 +901,11 @@ function PCRAnalysis({ apiKey }) {
   const [selectedInstrument, setSelectedInstrument] = useState('NIFTY');
   const [selectedExpiry, setSelectedExpiry] = useState('');
   const [selectedStrike, setSelectedStrike] = useState(null);
-  const [selectedInterval, setSelectedInterval] = useState('5minute');
+  const [selectedInterval, setSelectedInterval] = useState('minute');
   const [livePrice, setLivePrice] = useState(null);
   const [candleData, setCandleData] = useState([]);
+  const [ema10Data, setEma10Data] = useState([]);
+  const [ema20Data, setEma20Data] = useState([]);
   const [closeChartData, setCloseChartData] = useState(null);
   const [rsiChartData, setRsiChartData] = useState(null);
   const [tradeSignal, setTradeSignal] = useState({ action: 'HOLD', pattern: 'Waiting for data', reason: '' });
@@ -983,10 +917,11 @@ function PCRAnalysis({ apiKey }) {
   const [submittedAutoSignalKey, setSubmittedAutoSignalKey] = useState('');
   const [signalRows, setSignalRows] = useState([]);
   const [reverseSignalRows, setReverseSignalRows] = useState([]);
-  const [buyOnlyReverseSignalRows, setBuyOnlyReverseSignalRows] = useState([]);
   const [signalFilter, setSignalFilter] = useState('ALL');
   const [dayFilter, setDayFilter] = useState(new Date().toLocaleDateString('en-IN', { year: 'numeric', month: '2-digit', day: '2-digit' })); // Default to current day
-  const [oppositeStrikeCandleData, setOppositeStrikeCandleData] = useState([]); // Store opposite strike candles for buy-only reverse
+  const [fiveMinuteCandleData, setFiveMinuteCandleData] = useState([]);
+  const [threeMinuteCandleData, setThreeMinuteCandleData] = useState([]);
+  const [lockedSignalKeys, setLockedSignalKeys] = useState(new Set()); // Track signals that are locked (submitted/in progress)
   const candleChartRef = React.useRef(null);
   const chartSeriesRef = React.useRef(null);
   const ema10SeriesRef = React.useRef(null);
@@ -1001,6 +936,57 @@ function PCRAnalysis({ apiKey }) {
   const [chartLoading, setChartLoading] = useState(false);
   const [error, setError] = useState(null);
   const [kiteSessionError, setKiteSessionError] = useState(null);
+  const [isMarketOpen, setIsMarketOpen] = useState(false);
+
+  // Helper function to check if current time is within market hours (9:15 AM to 3:40 PM IST)
+  const checkMarketHours = () => {
+    const now = new Date();
+    // Convert to IST (UTC+5:30)
+    const istTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const hours = istTime.getHours();
+    const minutes = istTime.getMinutes();
+    const dayOfWeek = istTime.getDay();
+    
+    // Market closed on weekends (0 = Sunday, 6 = Saturday)
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      return false;
+    }
+    
+    // Market hours: 9:15 AM (9:15) to 3:40 PM (15:40)
+    const isOpen = (hours > 9 || (hours === 9 && minutes >= 15)) && (hours < 15 || (hours === 15 && minutes <= 40));
+    return isOpen;
+  };
+
+  // Monitor market hours status
+  useEffect(() => {
+    const updateMarketStatus = () => {
+      setIsMarketOpen(checkMarketHours());
+    };
+    
+    updateMarketStatus();
+    const marketCheckInterval = setInterval(updateMarketStatus, 30000); // Check every 30 seconds
+    
+    return () => clearInterval(marketCheckInterval);
+  }, []);
+
+  // Method to lock a signal (freeze entry details)
+  const lockSignal = (signal) => {
+    const signalKey = getSignalKey(signal);
+    setLockedSignalKeys(prev => new Set([...prev, signalKey]));
+    console.log(`[Signal Locked] ${signalKey} - Entry: ₹${signal.entry.toFixed(2)}, Target: ₹${signal.target.toFixed(2)}, SL: ₹${signal.stopLoss.toFixed(2)}`);
+  };
+
+  // Method to update signal exit details
+  const updateSignalExitDetails = (signal, exitPrice, outcome) => {
+    setSignalRows(prevRows =>
+      prevRows.map(s =>
+        s.time === signal.time && s.action === signal.action
+          ? updateSignalExit(s, exitPrice, outcome)
+          : s
+      )
+    );
+    console.log(`[Signal Updated] ${signal.action} - Exit Price: ₹${exitPrice.toFixed(2)}, Outcome: ${outcome}`);
+  };
 
   useEffect(() => {
     fetchPCRData();
@@ -1024,16 +1010,24 @@ function PCRAnalysis({ apiKey }) {
       console.log('[LiveTicks] No instrument token selected');
       return undefined;
     }
+
+    // Check if market is open
+    if (!checkMarketHours()) {
+      console.log('[LiveTicks] Market is closed (9:15 AM - 3:40 PM IST on weekdays only)');
+      setKiteSessionError('Market is closed. Live data available 9:15 AM - 3:40 PM IST on weekdays only.');
+      return undefined;
+    }
+
     console.log(`[LiveTicks] Connecting to live-ticks for token: ${selectedStrike.instrumentToken} (${selectedStrike.tradingSymbol})`);
-    
+
     let reconnectTimeout = null;
     const streamRef = { current: null };
-    
+
     const connectStream = () => {
       streamRef.current = new EventSource(`/api/kite/live-ticks?instrument_token=${selectedStrike.instrumentToken}`, { withCredentials: true });
-      
+
       streamRef.current.onopen = () => console.log(`[LiveTicks] EventSource connected for ${selectedStrike.instrumentToken}`);
-      
+
       streamRef.current.onmessage = (event) => {
         try {
           const tick = JSON.parse(event.data);
@@ -1044,18 +1038,18 @@ function PCRAnalysis({ apiKey }) {
           console.error('[LiveTicks] Failed to parse message:', err, event.data);
         }
       };
-      
+
       streamRef.current.onerror = (err) => {
         console.error(`[LiveTicks] EventSource error for ${selectedStrike.instrumentToken}:`, err);
         streamRef.current.close();
         streamRef.current = null;
         setKiteSessionError('Live ticks disconnected. Reconnecting...');
-        
+
         // Exponential backoff reconnect: 3s, 6s, 12s, 24s, 48s (capped)
         const reconnectAttempts = (reconnectTimeout?.__attempts || 0) + 1;
         const backoffMs = Math.min(3000 * Math.pow(2, reconnectAttempts - 1), 60000);
         console.log(`[LiveTicks] Reconnect attempt ${reconnectAttempts} in ${backoffMs}ms`);
-        
+
         reconnectTimeout = setTimeout(() => {
           setKiteSessionError(null);
           connectStream();
@@ -1063,9 +1057,9 @@ function PCRAnalysis({ apiKey }) {
         reconnectTimeout.__attempts = reconnectAttempts;
       };
     };
-    
+
     connectStream();
-    
+
     // Heartbeat: detect stale connection
     const heartbeatTimeout = setInterval(() => {
       if (streamRef.current && streamRef.current.readyState === EventSource.OPEN) {
@@ -1083,7 +1077,7 @@ function PCRAnalysis({ apiKey }) {
         }
       }
     }, 30000);
-    
+
     return () => {
       clearInterval(heartbeatTimeout);
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
@@ -1096,7 +1090,7 @@ function PCRAnalysis({ apiKey }) {
 
   useEffect(() => {
     if (!livePrice || !chartSeriesRef.current || candleData.length === 0) return;
-    
+
     const getIntervalSeconds = (interval) => {
       const map = { minute: 60, '3-minute': 180, '5-minute': 300, '15-minute': 900, hour: 3600, day: 86400 };
       return map[interval] || 60;
@@ -1108,7 +1102,7 @@ function PCRAnalysis({ apiKey }) {
 
     const lastCandleData = candleData[candleData.length - 1];
     if (!lastCandleData) return;
-    
+
     const lastCandleTime = Math.floor(lastCandleData.x / 1000);
     const currentTime = Math.floor(Date.now() / 1000);
     const intervalSeconds = getIntervalSeconds(selectedInterval);
@@ -1122,7 +1116,7 @@ function PCRAnalysis({ apiKey }) {
           chartSeriesRef.current.update(currentCandleDataRef.current);
           console.log(`[Chart] Finalized previous candle: O=${currentCandleDataRef.current.open.toFixed(2)} H=${currentCandleDataRef.current.high.toFixed(2)} L=${currentCandleDataRef.current.low.toFixed(2)} C=${currentCandleDataRef.current.close.toFixed(2)}`);
         }
-        
+
         // Create new candle
         lastCandleOpenRef.current = livePrice;
         currentCandleBoundaryRef.current = currentCandleBoundary;
@@ -1133,7 +1127,7 @@ function PCRAnalysis({ apiKey }) {
           low: livePrice,
           close: livePrice,
         };
-        
+
         chartSeriesRef.current.update(currentCandleDataRef.current);
         console.log(`[Chart] New candle created at ${new Date(currentCandleBoundary * 1000).toISOString()}: O=${livePrice.toFixed(2)}`);
       } else {
@@ -1146,14 +1140,182 @@ function PCRAnalysis({ apiKey }) {
           low: Math.min(currentCandleDataRef.current.low || lastCandleData.l, livePrice),
           close: livePrice,
         };
-        
+
         chartSeriesRef.current.update(currentCandleDataRef.current);
         console.log(`[Chart] Updated candle: O=${currentCandleDataRef.current.open.toFixed(2)} H=${currentCandleDataRef.current.high.toFixed(2)} L=${currentCandleDataRef.current.low.toFixed(2)} C=${currentCandleDataRef.current.close.toFixed(2)}`);
+
+        // Update EMAs with just the latest point (more efficient for Lightweight Charts)
+        if (ema10SeriesRef.current || ema20SeriesRef.current) {
+          const updatedCandleData = candleData.map((candle, idx) => {
+            if (idx === candleData.length - 1) {
+              return {
+                ...candle,
+                h: Math.max(candle.h, livePrice),
+                l: Math.min(candle.l, livePrice),
+                c: livePrice,
+              };
+            }
+            return candle;
+          });
+
+          // Calculate just the latest EMA values
+          const multiplier10 = 2 / (10 + 1);
+          const multiplier20 = 2 / (20 + 1);
+
+          let ema10Value = updatedCandleData[0]?.c || 0;
+          let ema20Value = updatedCandleData[0]?.c || 0;
+
+          for (let i = 1; i < updatedCandleData.length; i++) {
+            ema10Value = ((updatedCandleData[i].c - ema10Value) * multiplier10) + ema10Value;
+            ema20Value = ((updatedCandleData[i].c - ema20Value) * multiplier20) + ema20Value;
+          }
+
+          const lastCandle = updatedCandleData[updatedCandleData.length - 1];
+          const ema10Point = { time: Math.floor(lastCandle.x / 1000), value: ema10Value };
+          const ema20Point = { time: Math.floor(lastCandle.x / 1000), value: ema20Value };
+
+          if (ema10SeriesRef.current) {
+            ema10SeriesRef.current.update(ema10Point);
+          }
+          if (ema20SeriesRef.current) {
+            ema20SeriesRef.current.update(ema20Point);
+          }
+
+          console.log(`[EMA] Update - EMA10: ${ema10Value.toFixed(2)}, EMA20: ${ema20Value.toFixed(2)}`);
+        }
       }
     } catch (err) {
       console.error('[Chart] Failed to update candle:', err.message);
     }
   }, [livePrice, candleData, selectedInterval]);
+
+  // Real-time signal updates based on live price ticks
+  useEffect(() => {
+    if (!livePrice || candleData.length === 0 || !selectedStrike || !selectedInterval) return;
+
+    const getIntervalSeconds = (interval) => {
+      const map = { minute: 60, '3-minute': 180, '5-minute': 300, '15-minute': 900, hour: 3600, day: 86400 };
+      return map[interval] || 60;
+    };
+
+    const getCandleBoundary = (timestamp, intervalSeconds) => {
+      return Math.floor(timestamp / intervalSeconds) * intervalSeconds;
+    };
+
+    try {
+      const intervalSeconds = getIntervalSeconds(selectedInterval);
+      const currentTime = Math.floor(Date.now() / 1000);
+      const currentCandleBoundary = getCandleBoundary(currentTime, intervalSeconds);
+      const lastCandleData = candleData[candleData.length - 1];
+
+      if (!lastCandleData) return;
+
+      const lastCandleTime = Math.floor(lastCandleData.x / 1000);
+
+      // Only recalculate signals if we're in the same or a new candle period
+      if (currentCandleBoundary >= lastCandleTime) {
+        // Create updated candle data with live price incorporated into the last candle
+        const updatedCandleData = candleData.map((candle, idx) => {
+          if (idx === candleData.length - 1) {
+            return {
+              ...candle,
+              h: Math.max(candle.h, livePrice),
+              l: Math.min(candle.l, livePrice),
+              c: livePrice,
+            };
+          }
+          return candle;
+        });
+
+        // Recalculate signals with updated candle data
+        const oneMinuteMode = selectedInterval === 'minute';
+        const currentSignal = calculateTradeSignal(updatedCandleData, oneMinuteMode, fiveMinuteCandleData, threeMinuteCandleData);
+        setTradeSignal(currentSignal);
+        setAutoTradePlan(calculateCurrentTradePlan(updatedCandleData, currentSignal));
+        const newSignalRows = buildSignalRows(updatedCandleData, oneMinuteMode, fiveMinuteCandleData, threeMinuteCandleData);
+
+        // Preserve locked signals and only update non-locked ones
+        let signalRowsWithCurrent = signalRows.map(signal => {
+          const signalKey = `${signal.action}-${Math.floor(signal.time / 60000)}`; // Use action + minute as key
+          return lockedSignalKeys.has(signalKey) ? signal : newSignalRows.find(r => r.time === signal.time) || signal;
+        });
+
+        // Add current live signal to the top of the table if it's not a HOLD and not already locked
+        if (currentSignal.action !== 'HOLD') {
+          const lastCandle = updatedCandleData[updatedCandleData.length - 1];
+          const currentSignalKey = `${currentSignal.action}-${Math.floor(lastCandle.x / 60000)}`;
+
+          if (!lockedSignalKeys.has(currentSignalKey)) {
+            const levels = calculateTradeLevels(updatedCandleData.slice(-40), currentSignal, oneMinuteMode);
+            const currentSignalRow = {
+              ...currentSignal,
+              time: lastCandle.x,
+              entry: levels.entry,
+              target: levels.target,
+              stopLoss: levels.stopLoss,
+              levelSource: levels.levelSource,
+              outcome: 'Pending',
+              reason: `Live signal: ${currentSignal.reason}`,
+              evaluation: 'Pending outcome',
+            };
+            // Add current signal at the beginning if it's not already there
+            if (signalRowsWithCurrent.length === 0 || signalRowsWithCurrent[0].time !== lastCandle.x || signalRowsWithCurrent[0].action !== currentSignal.action) {
+              signalRowsWithCurrent = [currentSignalRow, ...signalRowsWithCurrent];
+            }
+          }
+        }
+
+        setSignalRows(signalRowsWithCurrent);
+        setReverseSignalRows(buildReverseSignalRows(signalRowsWithCurrent));
+
+        // Update EMA series on chart if they exist - use latest point only
+        const newEma10 = calculateEma(updatedCandleData, 10);
+        const newEma20 = calculateEma(updatedCandleData, 20);
+
+        if ((ema10SeriesRef.current || ema20SeriesRef.current) && newEma10.length > 0 && newEma20.length > 0) {
+          const ema10Point = newEma10[newEma10.length - 1];
+          const ema20Point = newEma20[newEma20.length - 1];
+
+          if (ema10SeriesRef.current) {
+            ema10SeriesRef.current.update(ema10Point);
+            console.log(`[RealTimeSignals-EMA10] Updated: ${ema10Point.value.toFixed(2)}`);
+          }
+          if (ema20SeriesRef.current) {
+            ema20SeriesRef.current.update(ema20Point);
+            console.log(`[RealTimeSignals-EMA20] Updated: ${ema20Point.value.toFixed(2)}`);
+          }
+          setEma10Data(newEma10);
+          setEma20Data(newEma20);
+        }
+
+        console.log(`[RealTimeSignals] Updated signals for ${selectedStrike.tradingSymbol} • ${selectedInterval} • LTP: ₹${livePrice.toFixed(2)}`);
+      }
+    } catch (err) {
+      console.error('[RealTimeSignals] Failed to update signals with live price:', err);
+    }
+  }, [livePrice, candleData, selectedStrike, selectedInterval, fiveMinuteCandleData, threeMinuteCandleData, lockedSignalKeys, signalRows]);
+
+  // Periodically redraw full EMA data to ensure visibility and consistency
+  useEffect(() => {
+    if (!candleData.length || !ema10SeriesRef.current || !ema20SeriesRef.current) return;
+
+    const redrawInterval = setInterval(() => {
+      try {
+        const fullEma10 = calculateEma(candleData, 10);
+        const fullEma20 = calculateEma(candleData, 20);
+
+        if (fullEma10.length > 0 && fullEma20.length > 0) {
+          ema10SeriesRef.current.setData(fullEma10);
+          ema20SeriesRef.current.setData(fullEma20);
+          console.log(`[EMA Redraw] Redrawn full EMA lines for ${fullEma10.length} candles`);
+        }
+      } catch (err) {
+        console.error('[EMA Redraw] Failed to redraw EMAs:', err);
+      }
+    }, 5000); // Redraw every 5 seconds
+
+    return () => clearInterval(redrawInterval);
+  }, [candleData]);
 
   useEffect(() => {
     const availableExpiries = strikeOptions
@@ -1180,25 +1342,20 @@ function PCRAnalysis({ apiKey }) {
     }
   }, [strikeOptions, selectedInstrument, selectedExpiry, nifty50Data]);
 
-  // Reset day filter if current selection is no longer available
-  useEffect(() => {
-    if (signalRows.length === 0 && dayFilter !== 'ALL') {
-      setDayFilter('ALL');
-    }
-  }, [signalRows, dayFilter]);
-
   // Generate reverse signals from signal rows
   useEffect(() => {
     setReverseSignalRows(buildReverseSignalRows(signalRows));
   }, [signalRows]);
 
-  // Generate buy-only reverse signals from signal rows
-  useEffect(() => {
-    setBuyOnlyReverseSignalRows(buildBuyOnlyReverseSignalRows(signalRows, selectedStrike, oppositeStrikeCandleData));
-  }, [signalRows, selectedStrike, oppositeStrikeCandleData]);
-
   const fetchRealPCR = async (strike) => {
     if (!strike?.instrumentToken) return;
+    
+    // Skip PCR fetch if market is closed
+    if (!checkMarketHours()) {
+      console.log('[PCR] Skipping fetch - market is closed');
+      return;
+    }
+
     try {
       const kiteAPI = new KiteAPI();
       const optionChain = await kiteAPI.getNiftyOptionChain();
@@ -1253,9 +1410,21 @@ function PCRAnalysis({ apiKey }) {
       if (err.response?.status === 401) {
         setKiteSessionError('Kite session expired. Please reconnect your Kite account.');
       } else if (err.code === 'ECONNABORTED' || err.message.includes('timeout')) {
-        console.warn('Real PCR fetch timeout, retrying...');
+        if (!checkMarketHours()) {
+          console.log('[PCR] Request timed out - market is closed');
+        } else {
+          console.warn('Real PCR fetch timeout, retrying...');
+        }
+      } else if (err.message.includes('Failed to fetch')) {
+        // Market data not available - likely market closed
+        if (!checkMarketHours()) {
+          console.log('[PCR] Market data unavailable - market is closed');
+        } else {
+          console.error('Real PCR fetch failed:', err);
+        }
+      } else {
+        console.error('Real PCR fetch failed:', err);
       }
-      console.error('Real PCR fetch failed:', err);
     }
   };
 
@@ -1322,6 +1491,11 @@ function PCRAnalysis({ apiKey }) {
         ]);
         fiveMinuteCandleData = toCandleData(Array.isArray(fiveMinuteCandles) ? fiveMinuteCandles : []);
         threeMinuteCandleData = toCandleData(Array.isArray(threeMinuteCandles) ? threeMinuteCandles : []);
+        setFiveMinuteCandleData(fiveMinuteCandleData);
+        setThreeMinuteCandleData(threeMinuteCandleData);
+      } else {
+        setFiveMinuteCandleData([]);
+        setThreeMinuteCandleData([]);
       }
 
       const latest = normalized[normalized.length - 1];
@@ -1331,37 +1505,48 @@ function PCRAnalysis({ apiKey }) {
           : latest || null
       );
 
-        const currentSignal = calculateTradeSignal(decisionCandleData, oneMinuteMode, fiveMinuteCandleData, threeMinuteCandleData);
-        setCandleData(candleData);
-        setTradeSignal(currentSignal);
-        setAutoTradePlan(calculateCurrentTradePlan(decisionCandleData, currentSignal));
-        setSignalRows(buildSignalRows(decisionCandleData, oneMinuteMode, fiveMinuteCandleData, threeMinuteCandleData));
-        
-        // Fetch opposite strike candle data for buy-only reverse signals
-        try {
-          const oppositeType = strike.type === 'PE' ? 'CE' : 'PE';
-          const oppositeStrike = strikeOptions.find(
-            option => option.strike === strike.strike 
-              && option.expiry === strike.expiry 
-              && option.type === oppositeType
-          );
-          
-          if (oppositeStrike?.instrumentToken) {
-            const oppositeCandles = await kiteAPI.getHistoricalData({
-              instrumentToken: oppositeStrike.instrumentToken,
-              interval,
-              from: formatDateTime(from, '09:15:00'),
-              to: formatDateTime(to, '23:59:59'),
-            });
-            const oppositeNormalized = Array.isArray(oppositeCandles) ? oppositeCandles : [];
-            const oppositeCandleData = toCandleData(oppositeNormalized);
-            setOppositeStrikeCandleData(oppositeCandleData);
-          }
-        } catch (err) {
-          console.error('Failed to fetch opposite strike data:', err);
-          setOppositeStrikeCandleData([]);
+      const currentSignal = calculateTradeSignal(decisionCandleData, oneMinuteMode, fiveMinuteCandleData, threeMinuteCandleData);
+      setCandleData(candleData);
+      setTradeSignal(currentSignal);
+      setAutoTradePlan(calculateCurrentTradePlan(decisionCandleData, currentSignal));
+      const historicalRows = buildSignalRows(decisionCandleData, oneMinuteMode, fiveMinuteCandleData, threeMinuteCandleData);
+
+      // Add current live signal to the top of the table if it's not a HOLD
+      let signalRowsWithCurrent = historicalRows;
+      if (currentSignal.action !== 'HOLD') {
+        const lastCandle = decisionCandleData[decisionCandleData.length - 1];
+        const levels = calculateTradeLevels(decisionCandleData.slice(-40), currentSignal, oneMinuteMode);
+        const currentSignalRow = {
+          ...currentSignal,
+          time: lastCandle.x,
+          entry: levels.entry,
+          target: levels.target,
+          stopLoss: levels.stopLoss,
+          levelSource: levels.levelSource,
+          outcome: 'Pending',
+          reason: `Live signal: ${currentSignal.reason}`,
+          evaluation: 'Pending outcome',
+        };
+        // Add current signal at the beginning if it's not already there
+        if (historicalRows.length === 0 || historicalRows[0].time !== lastCandle.x || historicalRows[0].action !== currentSignal.action) {
+          signalRowsWithCurrent = [currentSignalRow, ...historicalRows];
         }
-        
+      }
+
+      setSignalRows(signalRowsWithCurrent);
+
+      // Fetch opposite strike candle data for buy-only reverse signals
+      try {
+        const oppositeType = strike.type === 'PE' ? 'CE' : 'PE';
+        const oppositeStrike = strikeOptions.find(
+          option => option.strike === strike.strike
+            && option.expiry === strike.expiry
+            && option.type === oppositeType
+        );
+      } catch (err) {
+        console.error('Failed to fetch opposite strike data:', err);
+      }
+
       setCloseChartData({
         datasets: [{
           label: `${strike.label} close • ${interval}`,
@@ -1538,8 +1723,12 @@ function PCRAnalysis({ apiKey }) {
     const ema20 = chart.addSeries(LineSeries, { color: '#38bdf8', lineWidth: 2.5, title: 'EMA 20', priceLineVisible: true, priceLineColor: '#38bdf8' });
     ema10SeriesRef.current = ema10;
     ema20SeriesRef.current = ema20;
-    ema10.setData(calculateEma(candleData, 10));
-    ema20.setData(calculateEma(candleData, 20));
+    const ema10Arr = calculateEma(candleData, 10);
+    const ema20Arr = calculateEma(candleData, 20);
+    ema10.setData(ema10Arr);
+    ema20.setData(ema20Arr);
+    setEma10Data(ema10Arr);
+    setEma20Data(ema20Arr);
     const markers = [];
     const markerSeries = createSeriesMarkers(series, markers);
     chart.timeScale().fitContent();
@@ -1616,23 +1805,23 @@ function PCRAnalysis({ apiKey }) {
   const expiryOptions = strikeOptions.filter(option => option.instrument === selectedInstrument)
     .map(option => option.expiry).filter((expiry, index, values) => values.indexOf(expiry) === index).sort();
   const visibleStrikeOptions = strikeOptions.filter(option => option.instrument === selectedInstrument && option.expiry === selectedExpiry);
-  
+
   // Get unique days from signal rows
   const uniqueDays = [...new Set(signalRows.map(signal => {
     const date = new Date(signal.time);
     return date.toLocaleDateString('en-IN', { year: 'numeric', month: '2-digit', day: '2-digit' });
   }))].sort().reverse();
-  
+
   // Filter by action and day
   const filteredSignalRows = signalRows.filter(signal => {
     const actionMatch = signalFilter === 'ALL' || signal.action === signalFilter;
     if (!actionMatch) return false;
-    
+
     if (dayFilter === 'ALL') return true;
     const signalDate = new Date(signal.time).toLocaleDateString('en-IN', { year: 'numeric', month: '2-digit', day: '2-digit' });
     return signalDate === dayFilter;
   });
-  
+
   const evaluatedSignals = filteredSignalRows.filter(signal => signal.outcome === 'True' || signal.outcome === 'False');
   const successfulSignals = evaluatedSignals.filter(signal => signal.outcome === 'True');
   const overallSuccess = evaluatedSignals.length > 0
@@ -1667,7 +1856,7 @@ function PCRAnalysis({ apiKey }) {
   const filteredReverseSignalRows = reverseSignalRows.filter(signal => {
     const actionMatch = signalFilter === 'ALL' || signal.action === signalFilter;
     if (!actionMatch) return false;
-    
+
     if (dayFilter === 'ALL') return true;
     const signalDate = new Date(signal.time).toLocaleDateString('en-IN', { year: 'numeric', month: '2-digit', day: '2-digit' });
     return signalDate === dayFilter;
@@ -1700,43 +1889,6 @@ function PCRAnalysis({ apiKey }) {
     .filter(signal => signal.outcome === 'Pending')
     .reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
 
-  // Buy-only reverse signals filtering and calculations
-  const filteredBuyOnlyReverseSignalRows = buyOnlyReverseSignalRows.filter(signal => {
-    const actionMatch = 'BUY' === 'ALL' || 'BUY' === signalFilter; // Always BUY in this table
-    if (!actionMatch && signalFilter !== 'ALL') return false;
-    
-    if (dayFilter === 'ALL') return true;
-    const signalDate = new Date(signal.time).toLocaleDateString('en-IN', { year: 'numeric', month: '2-digit', day: '2-digit' });
-    return signalDate === dayFilter;
-  });
-
-  const evaluatedBuyOnlyReverseSignals = filteredBuyOnlyReverseSignalRows.filter(signal => signal.outcome === 'True' || signal.outcome === 'False');
-  const successfulBuyOnlyReverseSignals = evaluatedBuyOnlyReverseSignals.filter(signal => signal.outcome === 'True');
-  const buyOnlyReverseOverallSuccess = evaluatedBuyOnlyReverseSignals.length > 0
-    ? (successfulBuyOnlyReverseSignals.length / evaluatedBuyOnlyReverseSignals.length) * 100
-    : 0;
-  const latestBuyOnlyReverseSignalTradeCost = filteredBuyOnlyReverseSignalRows.length > 0
-    ? tradeCostForSignal(filteredBuyOnlyReverseSignalRows[0])
-    : null;
-  const buyOnlyReverseWinAmount = evaluatedBuyOnlyReverseSignals
-    .filter(signal => signal.outcome === 'True')
-    .reduce((total, signal) => total + (Math.abs(signal.target - signal.entry) * lotSize) + tradeCostForSignal(signal).totalCharges, 0);
-  const buyOnlyReverseLossAmount = evaluatedBuyOnlyReverseSignals
-    .filter(signal => signal.outcome === 'False')
-    .reduce((total, signal) => total + (Math.abs(signal.stopLoss - signal.entry) * lotSize) + tradeCostForSignal(signal).totalCharges, 0);
-  const buyOnlyReverseWinAmountPercent = (buyOnlyReverseWinAmount + buyOnlyReverseLossAmount) > 0 ? (buyOnlyReverseWinAmount / (buyOnlyReverseWinAmount + buyOnlyReverseLossAmount)) * 100 : 0;
-  const buyOnlyReverseRealizedInvestment = evaluatedBuyOnlyReverseSignals.reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
-  const buyOnlyReverseRealizedProfitLoss = evaluatedBuyOnlyReverseSignals.reduce((total, signal) => {
-    const priceMove = signal.outcome === 'True'
-      ? Math.abs(signal.target - signal.entry)
-      : -Math.abs(signal.stopLoss - signal.entry);
-    const cost = tradeCostForSignal(signal);
-    return total + ((priceMove * lotSize) - cost.totalCharges);
-  }, 0);
-  const buyOnlyReversePendingInvestment = filteredBuyOnlyReverseSignalRows
-    .filter(signal => signal.outcome === 'Pending')
-    .reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
-
   const downloadSignalsJson = () => {
     const exportData = {
       exportedAt: new Date().toISOString(),
@@ -1759,62 +1911,62 @@ function PCRAnalysis({ apiKey }) {
     <div className="pcr-container">
       <div className="pcr-layout">
         <section className="pcr-analysis-box">
-        <div className="pcr-header">
-          <h2>📈 Nifty 50 Put-Call Ratio Analysis</h2>
-          <button onClick={fetchPCRData} className="refresh-btn">🔄 Refresh</button>
-        </div>
-
-        {error && <div className="error-message">{error}</div>}
-        {kiteSessionError && <div className="error-message" style={{ backgroundColor: '#fee2e2', color: '#991b1b', borderColor: '#fca5a5' }}>⚠️ {kiteSessionError}</div>}
-
-        <div className="nifty-info">
-          <div className="nifty-price">
-            <span className="label">NIFTY 50</span>
-            <span className="price">
-              {nifty50Data.last_price ? `${nifty50Data.last_price.toFixed(2)}` : 'N/A'}
-            </span>
+          <div className="pcr-header">
+            <h2>📈 Nifty 50 Put-Call Ratio Analysis</h2>
+            <button onClick={fetchPCRData} className="refresh-btn">🔄 Refresh</button>
           </div>
-          <div className={`nifty-change ${nifty50Data.last_traded_quantity >= 0 ? 'positive' : 'negative'}`}>
-            <span className="label">Change</span>
-            <span className="value">
-              {nifty50Data.net_change >= 0 ? '▲' : '▼'} {nifty50Data.net_change?.toFixed(2)} ({nifty50Data.change_percent?.toFixed(2)}%)
-            </span>
-          </div>
-        </div>
 
-        <div className="pcr-metrics">
-          <div className="metric">
-            <div className="metric-label">CE Call Volume</div>
-            <div className="metric-value" style={{ color: '#2563eb' }}>
-              {Number(pcrData?.call_volume || 0).toLocaleString()}
+          {error && <div className="error-message">{error}</div>}
+          {kiteSessionError && <div className="error-message" style={{ backgroundColor: '#fee2e2', color: '#991b1b', borderColor: '#fca5a5' }}>⚠️ {kiteSessionError}</div>}
+
+          <div className="nifty-info">
+            <div className="nifty-price">
+              <span className="label">NIFTY 50</span>
+              <span className="price">
+                {nifty50Data.last_price ? `${nifty50Data.last_price.toFixed(2)}` : 'N/A'}
+              </span>
             </div>
-            <div className="metric-sentiment">Selected strike</div>
+            <div className={`nifty-change ${nifty50Data.last_traded_quantity >= 0 ? 'positive' : 'negative'}`}>
+              <span className="label">Change</span>
+              <span className="value">
+                {nifty50Data.net_change >= 0 ? '▲' : '▼'} {nifty50Data.net_change?.toFixed(2)} ({nifty50Data.change_percent?.toFixed(2)}%)
+              </span>
+            </div>
           </div>
 
-          <div className="metric">
-            <div className="metric-label">PE Put Volume</div>
-            <div className="metric-value" style={{ color: '#dc2626' }}>
-              {Number(pcrData?.put_volume || 0).toLocaleString()}
+          <div className="pcr-metrics">
+            <div className="metric">
+              <div className="metric-label">CE Call Volume</div>
+              <div className="metric-value" style={{ color: '#2563eb' }}>
+                {Number(pcrData?.call_volume || 0).toLocaleString()}
+              </div>
+              <div className="metric-sentiment">Selected strike</div>
             </div>
-            <div className="metric-sentiment">Selected strike</div>
-          </div>
 
-          <div className="metric">
-            <div className="metric-label">PCR - Volume</div>
-            <div className="metric-value" style={{ color: getSentimentColor(pcrVolume) }}>
-              {pcrVolume.toFixed(3)}
+            <div className="metric">
+              <div className="metric-label">PE Put Volume</div>
+              <div className="metric-value" style={{ color: '#dc2626' }}>
+                {Number(pcrData?.put_volume || 0).toLocaleString()}
+              </div>
+              <div className="metric-sentiment">Selected strike</div>
             </div>
-            <div className="metric-sentiment">PE volume / CE volume</div>
-          </div>
 
-          <div className="metric">
-            <div className="metric-label">PCR - Open Interest</div>
-            <div className="metric-value" style={{ color: getSentimentColor(pcrOI) }}>
-              {pcrOI.toFixed(3)}
+            <div className="metric">
+              <div className="metric-label">PCR - Volume</div>
+              <div className="metric-value" style={{ color: getSentimentColor(pcrVolume) }}>
+                {pcrVolume.toFixed(3)}
+              </div>
+              <div className="metric-sentiment">PE volume / CE volume</div>
             </div>
-            <div className="metric-sentiment">PE OI / CE OI</div>
+
+            <div className="metric">
+              <div className="metric-label">PCR - Open Interest</div>
+              <div className="metric-value" style={{ color: getSentimentColor(pcrOI) }}>
+                {pcrOI.toFixed(3)}
+              </div>
+              <div className="metric-sentiment">PE OI / CE OI</div>
+            </div>
           </div>
-        </div>
         </section>
 
         <div className="chart-panel">
@@ -2153,89 +2305,6 @@ function PCRAnalysis({ apiKey }) {
                           <td>₹{Number(signal.stopLoss).toFixed(2)}<small>Hit when original target hit</small></td>
                           <td>₹{Number(signal.outcome === 'True' ? signal.target : signal.outcome === 'False' ? signal.stopLoss : signal.entry).toFixed(2)}</td>
                           <td className={signal.outcome === 'Pending' ? '' : signal.outcome === 'True' ? 'profit' : 'loss'}>{(signal.action === 'SELL' ? (signal.outcome === 'True' ? signal.entry - signal.target : signal.outcome === 'False' ? signal.entry - signal.stopLoss : 0) : (signal.outcome === 'True' ? signal.target - signal.entry : signal.outcome === 'False' ? signal.stopLoss - signal.entry : 0)).toFixed(2)} pts</td>
-                          <td><span className={`outcome-pill ${signal.outcome.toLowerCase()}`}>{signal.outcome}</span></td>
-                          <td>{signal.evaluation}</td>
-                          <td>{signal.reason}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-
-          <section className="signal-table-panel">
-            <div className="signal-table-header">
-              <h3>{selectedInterval === 'minute' ? 'Buy Only Reverse Combined Signals (1m multi-confirmation)' : 'Buy Only Reverse Combined Signals'}</h3>
-              <div className="signal-filter-row">
-                <label>
-                  Day:
-                  <select value={dayFilter} onChange={(event) => setDayFilter(event.target.value)}>
-                    <option value="ALL">All Days</option>
-                    {uniqueDays.map(day => (
-                      <option key={day} value={day}>{day}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <div className="signal-summary">
-                <span>{filteredBuyOnlyReverseSignalRows.length} buy-only reverse decisions | Buy-only reverse success: {buyOnlyReverseOverallSuccess.toFixed(1)}%</span>
-                {latestBuyOnlyReverseSignalTradeCost && <span>Latest buy-only reverse trade cost: ₹{latestBuyOnlyReverseSignalTradeCost.totalCashRequired.toFixed(2)} (Premium ₹{latestBuyOnlyReverseSignalTradeCost.notional.toFixed(2)} + charges ₹{latestBuyOnlyReverseSignalTradeCost.totalCharges.toFixed(2)})</span>}
-                <span>Buy-only reverse win amount: {buyOnlyReverseWinAmountPercent.toFixed(1)}% | Buy-only reverse investment: ₹{buyOnlyReverseRealizedInvestment.toFixed(2)}</span>
-                <span>Buy-only reverse Gross P/L: <b className={buyOnlyReverseRealizedProfitLoss >= 0 ? 'profit' : 'loss'}>{buyOnlyReverseRealizedProfitLoss >= 0 ? '+' : ''}₹{buyOnlyReverseRealizedProfitLoss.toFixed(2)}</b> | Buy-only reverse pending: ₹{buyOnlyReversePendingInvestment.toFixed(2)} | Lot size: {lotSize}</span>
-              </div>
-            </div>
-            {filteredBuyOnlyReverseSignalRows.length === 0 ? (
-              <div className="signal-table-empty">No buy-only reverse signals {dayFilter !== 'ALL' ? `for ${dayFilter}` : 'in this range'}.</div>
-            ) : (
-              <div className="signal-table-scroll">
-                <table className="signal-table">
-                  <thead>
-                    <tr>
-                      <th>Time</th>
-                      <th>Action (Always BUY)</th>
-                      <th>Instrument Type</th>
-                      <th>Entry Price</th>
-                      <th>Trade Cost</th>
-                      <th>Candlestick</th>
-                      <th>Chart pattern</th>
-                      {selectedInterval === 'minute' && <th>1m Chart Structure</th>}
-                      {selectedInterval === 'minute' && <th>3m Chart Structure</th>}
-                      {selectedInterval === 'minute' && <th>5m Chart Structure</th>}
-                      {selectedInterval === 'minute' && <th>1m EMA 10/20</th>}
-                      <th>Entry</th>
-                      <th>Target (Original SL)</th>
-                      <th>Stop loss (Original Target)</th>
-                      <th>Exit Price</th>
-                      <th>Profit/Loss Points</th>
-                      <th>Result</th>
-                      <th>Evaluation</th>
-                      <th>Reason</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredBuyOnlyReverseSignalRows.map((signal, index) => {
-                      const parts = signal.pattern.split(' | ');
-                      const tradeCost = tradeCostForSignal(signal);
-                      return (
-                        <tr key={`buy-only-reverse-${signal.time}-${index}`}>
-                          <td>{new Date(signal.time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
-                          <td><span className={`signal-pill ${signal.action.toLowerCase()}`}>{signal.action}</span></td>
-                          <td><strong>{signal.reverseInstrumentType}</strong><small>Opposite to {selectedStrike?.type}</small></td>
-                          <td>₹{Number(signal.entry).toFixed(2)}</td>
-                          <td>₹{tradeCost.totalCashRequired.toFixed(2)}<small>Premium ₹{tradeCost.notional.toFixed(2)} + fees ₹{tradeCost.totalCharges.toFixed(2)}</small></td>
-                          <td>{parts[0].replace('Liquidity sweep + ', '').replace('Institutional ', '')}</td>
-                          <td>{parts[1] || 'Confirmed structure'}</td>
-                          {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.chart || 'No chart structure confirmation'}</td>}
-                          {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.threeMinuteChart || 'No 3m chart structure confirmation'}</td>}
-                          {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.fiveMinuteChart || 'No 5m chart structure confirmation'}</td>}
-                          {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.emaStatus || 'EMA confirmation unavailable'}<small>{signal.minuteConfirmation?.ema || ''}</small></td>}
-                          <td>₹{Number(signal.entry).toFixed(2)}</td>
-                          <td>₹{Number(signal.target).toFixed(2)}<small>Hit when original SL hit</small></td>
-                          <td>₹{Number(signal.stopLoss).toFixed(2)}<small>Hit when original target hit</small></td>
-                          <td>₹{Number(signal.reverseExitPrice || signal.entry).toFixed(2)}</td>
-                          <td className={signal.outcome === 'Pending' ? '' : signal.reverseExitPrice - signal.entry >= 0 ? 'profit' : 'loss'}>{(signal.reverseExitPrice ? signal.reverseExitPrice - signal.entry : 0).toFixed(2)} pts</td>
                           <td><span className={`outcome-pill ${signal.outcome.toLowerCase()}`}>{signal.outcome}</span></td>
                           <td>{signal.evaluation}</td>
                           <td>{signal.reason}</td>
