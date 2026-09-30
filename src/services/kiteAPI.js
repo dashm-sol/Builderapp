@@ -5,6 +5,7 @@ class KiteAPI {
     this.client = axios.create({
       baseURL: '/api/kite',
       withCredentials: true,
+      timeout: 15000, // 15 second timeout for all requests
     });
   }
 

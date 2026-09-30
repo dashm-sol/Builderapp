@@ -146,6 +146,7 @@ async function proxyKiteRequest(req, res, pathName, params = {}, options = {}) {
     const response = await axios.get(`${kiteBaseUrl}${pathName}`, {
       params,
       responseType: options.responseType || 'json',
+      timeout: 15000, // 15 second timeout
       headers: {
         'X-Kite-Version': '3',
         Authorization: `token ${apiKey}:${req.session.kiteAccessToken}`,
@@ -171,17 +172,19 @@ async function proxyKiteRequest(req, res, pathName, params = {}, options = {}) {
 
     res.json(response.data);
   } catch (error) {
-    const status = error.response?.status || 502;
-    const message = error.response?.data?.message || 'Kite API request failed';
+    const status = error.response?.status || (error.code === 'ECONNABORTED' ? 408 : 502);
+    const message = error.response?.data?.message || error.message || 'Kite API request failed';
     console.error('Kite API request failed:', {
       path: pathName,
       status,
+      error: error.message,
       response: error.response?.data || null,
       hasSessionAccessToken: Boolean(req.session.kiteAccessToken),
     });
     writeSessionDebugLog('kite-api-request-failed', {
       path: pathName,
       status,
+      error: error.message,
       response: error.response?.data || null,
       hasSessionAccessToken: Boolean(req.session.kiteAccessToken),
     });
@@ -189,6 +192,9 @@ async function proxyKiteRequest(req, res, pathName, params = {}, options = {}) {
       req.session.kiteAccessToken = null;
       writeSessionDebugLog('session-token-cleared', { reason: 'kite-api-403' });
       return res.status(401).json({ error: 'Kite session expired or is invalid. Please connect Kite again.' });
+    }
+    if (status === 408) {
+      return res.status(408).json({ error: 'Kite API request timed out. Please try again.' });
     }
     res.status(status).json({ error: message });
   }
@@ -432,12 +438,21 @@ app.get('/api/kite/live-ticks', requireKiteSession, (req, res) => {
       socket: kiteSocket,
       subscribers: new Map(),
       reconnectAttempts: 0,
-      maxReconnectAttempts: 5,
+      maxReconnectAttempts: Infinity, // Unlimited reconnect attempts
+      maxBackoffMs: 32000, // Cap backoff at 32 seconds
     };
     
     kiteSocket.on('open', () => {
       console.log(`[Live Ticks Pool] Kite WebSocket connected for session ${sessionId}`);
-      poolEntry.reconnectAttempts = 0;
+      poolEntry.reconnectAttempts = 0; // Reset on successful connection
+      
+      // Start heartbeat ping every 30 seconds
+      poolEntry.heartbeatInterval = setInterval(() => {
+        if (kiteSocket.readyState === WebSocket.OPEN) {
+          kiteSocket.ping();
+          console.log(`[Live Ticks Pool] Ping sent for session ${sessionId}`);
+        }
+      }, 30000);
       
       // Subscribe to all currently registered tokens
       const tokens = Array.from(poolEntry.subscribers.keys());
@@ -446,6 +461,10 @@ app.get('/api/kite/live-ticks', requireKiteSession, (req, res) => {
         kiteSocket.send(JSON.stringify({ a: 'mode', v: ['ltp', tokens] }));
         console.log(`[Live Ticks Pool] Subscribed to tokens: ${tokens.join(', ')}`);
       }
+    });
+
+    kiteSocket.on('pong', () => {
+      console.log(`[Live Ticks Pool] Pong received for session ${sessionId}`);
     });
 
     kiteSocket.on('message', (message, isBinary) => {
@@ -463,24 +482,34 @@ app.get('/api/kite/live-ticks', requireKiteSession, (req, res) => {
     kiteSocket.on('error', (error) => {
       console.error(`[Live Ticks Pool] Kite WebSocket error for session ${sessionId}:`, error.message);
       
-      // Try to reconnect with exponential backoff
+      // Clear heartbeat interval
+      if (poolEntry.heartbeatInterval) {
+        clearInterval(poolEntry.heartbeatInterval);
+      }
+      
+      // Try to reconnect with exponential backoff, unlimited attempts
       if (poolEntry.reconnectAttempts < poolEntry.maxReconnectAttempts) {
         poolEntry.reconnectAttempts += 1;
-        const backoffMs = Math.pow(2, poolEntry.reconnectAttempts) * 1000;
-        console.log(`[Live Ticks Pool] Reconnect attempt ${poolEntry.reconnectAttempts} in ${backoffMs}ms`);
+        const backoffMs = Math.min(Math.pow(2, poolEntry.reconnectAttempts) * 1000, poolEntry.maxBackoffMs);
+        console.log(`[Live Ticks Pool] Reconnect attempt ${poolEntry.reconnectAttempts} in ${backoffMs}ms for session ${sessionId}`);
         
         setTimeout(() => {
-          kiteSocket.close();
+          if (kiteSocket.readyState !== WebSocket.CLOSED && kiteSocket.readyState !== WebSocket.CLOSING) {
+            kiteSocket.close();
+          }
           kiteSocketPool.delete(sessionId);
         }, backoffMs);
       } else {
-        console.error(`[Live Ticks Pool] Max reconnection attempts reached for session ${sessionId}`);
+        console.error(`[Live Ticks Pool] Reconnect attempts exhausted for session ${sessionId}`);
         kiteSocketPool.delete(sessionId);
       }
     });
 
     kiteSocket.on('close', () => {
       console.log(`[Live Ticks Pool] Kite WebSocket closed for session ${sessionId}`);
+      if (poolEntry.heartbeatInterval) {
+        clearInterval(poolEntry.heartbeatInterval);
+      }
       kiteSocketPool.delete(sessionId);
     });
 
@@ -521,6 +550,12 @@ app.get('/api/kite/live-ticks', requireKiteSession, (req, res) => {
           console.log(`[Live Ticks Pool] Unsubscribed from token ${instrumentToken}`);
         }
       }
+    }
+    
+    // Clear heartbeat if no more subscribers remain
+    if (poolEntry.subscribers.size === 0 && poolEntry.heartbeatInterval) {
+      clearInterval(poolEntry.heartbeatInterval);
+      console.log(`[Live Ticks Pool] Cleared heartbeat for session ${sessionId}`);
     }
     
     console.log(`[Live Ticks Pool] Stream closed for token ${instrumentToken}`);

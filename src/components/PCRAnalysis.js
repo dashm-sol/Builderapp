@@ -1000,6 +1000,7 @@ function PCRAnalysis({ apiKey }) {
   const [loading, setLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [kiteSessionError, setKiteSessionError] = useState(null);
 
   useEffect(() => {
     fetchPCRData();
@@ -1037,6 +1038,7 @@ function PCRAnalysis({ apiKey }) {
         try {
           const tick = JSON.parse(event.data);
           console.log(`[LiveTicks] Received update for ${selectedStrike.instrumentToken}: ₹${tick.lastPrice.toFixed(2)}`);
+          streamRef.current.__lastMessageTime = Date.now();
           setLivePrice(tick.lastPrice);
         } catch (err) {
           console.error('[LiveTicks] Failed to parse message:', err, event.data);
@@ -1047,18 +1049,43 @@ function PCRAnalysis({ apiKey }) {
         console.error(`[LiveTicks] EventSource error for ${selectedStrike.instrumentToken}:`, err);
         streamRef.current.close();
         streamRef.current = null;
+        setKiteSessionError('Live ticks disconnected. Reconnecting...');
         
-        // Attempt to reconnect after 3 seconds
-        console.log('[LiveTicks] Attempting to reconnect in 3 seconds...');
+        // Exponential backoff reconnect: 3s, 6s, 12s, 24s, 48s (capped)
+        const reconnectAttempts = (reconnectTimeout?.__attempts || 0) + 1;
+        const backoffMs = Math.min(3000 * Math.pow(2, reconnectAttempts - 1), 60000);
+        console.log(`[LiveTicks] Reconnect attempt ${reconnectAttempts} in ${backoffMs}ms`);
+        
         reconnectTimeout = setTimeout(() => {
+          setKiteSessionError(null);
           connectStream();
-        }, 3000);
+        }, backoffMs);
+        reconnectTimeout.__attempts = reconnectAttempts;
       };
     };
     
     connectStream();
     
+    // Heartbeat: detect stale connection
+    const heartbeatTimeout = setInterval(() => {
+      if (streamRef.current && streamRef.current.readyState === EventSource.OPEN) {
+        // No message in 45 seconds = stale, reconnect
+        const lastMessageTime = streamRef.current.__lastMessageTime || Date.now();
+        if (Date.now() - lastMessageTime > 45000) {
+          console.warn('[LiveTicks] No data for 45s, reconnecting...');
+          streamRef.current.close();
+          streamRef.current = null;
+          setKiteSessionError('No live data received. Reconnecting...');
+          reconnectTimeout = setTimeout(() => {
+            setKiteSessionError(null);
+            connectStream();
+          }, 3000);
+        }
+      }
+    }, 30000);
+    
     return () => {
+      clearInterval(heartbeatTimeout);
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
       if (streamRef.current) {
         console.log(`[LiveTicks] Closing stream for ${selectedStrike.instrumentToken}`);
@@ -1223,8 +1250,12 @@ function PCRAnalysis({ apiKey }) {
 
       setPcrData(nextData);
     } catch (err) {
+      if (err.response?.status === 401) {
+        setKiteSessionError('Kite session expired. Please reconnect your Kite account.');
+      } else if (err.code === 'ECONNABORTED' || err.message.includes('timeout')) {
+        console.warn('Real PCR fetch timeout, retrying...');
+      }
       console.error('Real PCR fetch failed:', err);
-      setError(err.message || 'Unable to compute live PCR.');
     }
   };
 
@@ -1247,21 +1278,27 @@ function PCRAnalysis({ apiKey }) {
       });
 
       const normalized = Array.isArray(candles) ? candles : [];
-      const toCandleData = (rawCandles) => rawCandles.map((item) => {
-        const timestamp = Array.isArray(item) ? item[0] : item?.timestamp;
-        const dateValue = new Date(timestamp).getTime();
-        return {
-          x: dateValue,
-          o: Number(Array.isArray(item) ? item[1] : item?.open),
-          h: Number(Array.isArray(item) ? item[2] : item?.high),
-          l: Number(Array.isArray(item) ? item[3] : item?.low),
-          c: Number(Array.isArray(item) ? item[4] : item?.close),
-        };
-      }).filter(candle => Number.isFinite(candle.x)
-        && Number.isFinite(candle.o)
-        && Number.isFinite(candle.h)
-        && Number.isFinite(candle.l)
-        && Number.isFinite(candle.c));
+      const toCandleData = (rawCandles) => {
+        const candlesByTimestamp = new Map();
+        rawCandles.forEach((item) => {
+          const timestamp = Array.isArray(item) ? item[0] : item?.timestamp;
+          const candle = {
+            x: new Date(timestamp).getTime(),
+            o: Number(Array.isArray(item) ? item[1] : item?.open),
+            h: Number(Array.isArray(item) ? item[2] : item?.high),
+            l: Number(Array.isArray(item) ? item[3] : item?.low),
+            c: Number(Array.isArray(item) ? item[4] : item?.close),
+          };
+          if (Number.isFinite(candle.x)
+            && Number.isFinite(candle.o)
+            && Number.isFinite(candle.h)
+            && Number.isFinite(candle.l)
+            && Number.isFinite(candle.c)) {
+            candlesByTimestamp.set(candle.x, candle);
+          }
+        });
+        return Array.from(candlesByTimestamp.values()).sort((first, second) => first.x - second.x);
+      };
       const candleData = toCandleData(normalized);
       const decisionCandleData = candleData;
       const oneMinuteMode = interval === 'minute';
@@ -1351,7 +1388,13 @@ function PCRAnalysis({ apiKey }) {
         }],
       });
     } catch (err) {
-      setError(err.message);
+      if (err.response?.status === 401) {
+        setKiteSessionError('Kite session expired. Please reconnect your Kite account.');
+      } else if (err.code === 'ECONNABORTED' || err.message.includes('timeout')) {
+        setKiteSessionError('Request timeout. Check your connection.');
+      } else {
+        setError(err.message);
+      }
       console.error('Chart fetch failed:', err);
     } finally {
       setChartLoading(false);
@@ -1515,7 +1558,7 @@ function PCRAnalysis({ apiKey }) {
       ema10SeriesRef.current = null;
       ema20SeriesRef.current = null;
     };
-  }, [candleData, selectedInterval]);
+  }, [candleData, selectedInterval, chartLoading]);
 
   const fetchPCRData = async () => {
     setLoading(true);
@@ -1722,6 +1765,7 @@ function PCRAnalysis({ apiKey }) {
         </div>
 
         {error && <div className="error-message">{error}</div>}
+        {kiteSessionError && <div className="error-message" style={{ backgroundColor: '#fee2e2', color: '#991b1b', borderColor: '#fca5a5' }}>⚠️ {kiteSessionError}</div>}
 
         <div className="nifty-info">
           <div className="nifty-price">
