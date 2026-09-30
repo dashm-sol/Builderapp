@@ -1,0 +1,128 @@
+/* SignalTable.css */
+
+.signal-table-container {
+  margin-top: 24px;
+}
+
+.signal-table-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.signal-table-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: bold;
+  color: #1e293b;
+}
+
+.signal-table-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.signal-table-button {
+  padding: 8px 12px;
+  border-radius: 4px;
+  border: 1px solid #cbd5e1;
+  background-color: #ffffff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.signal-table-button:hover {
+  border-color: #94a3b8;
+  background-color: #f1f5f9;
+}
+
+.signal-table-button.active {
+  background-color: #0ea5e9;
+  color: #ffffff;
+  border-color: #0ea5e9;
+}
+
+.signal-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  background-color: #ffffff;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+}
+
+.signal-table thead {
+  background-color: #f8fafc;
+  border-bottom: 2px solid #e2e8f0;
+}
+
+.signal-table th {
+  padding: 12px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+  color: #334155;
+}
+
+.signal-table th:hover {
+  background-color: #f1f5f9;
+}
+
+.signal-table tbody tr {
+  border-bottom: 1px solid #e2e8f0;
+  transition: background-color 0.2s ease;
+}
+
+.signal-table tbody tr:nth-child(even) {
+  background-color: #f8fafc;
+}
+
+.signal-table tbody tr:hover {
+  background-color: #f1f5f9;
+}
+
+.signal-table td {
+  padding: 12px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.signal-outcome-true {
+  color: #059669;
+  font-weight: bold;
+}
+
+.signal-outcome-false {
+  color: #dc2626;
+  font-weight: bold;
+}
+
+.signal-outcome-pending {
+  color: #f59e0b;
+  font-weight: bold;
+}
+
+.signal-action-buy {
+  color: #059669;
+  font-weight: bold;
+}
+
+.signal-action-sell {
+  color: #dc2626;
+  font-weight: bold;
+}
+
+.signal-table-footer {
+  margin-top: 12px;
+  font-size: 12px;
+  color: #64748b;
+}

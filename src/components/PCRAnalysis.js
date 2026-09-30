@@ -14,6 +14,8 @@ import 'chartjs-adapter-date-fns';
 import { createChart, createSeriesMarkers, CandlestickSeries, LineSeries } from 'lightweight-charts';
 import './PCRAnalysis.css';
 import KiteAPI from '../services/kiteAPI';
+import CandlestickChart from './CandlestickChart';
+import AutoTradePanel from './AutoTradePanel';
 
 ChartJS.register(
   LinearScale,
@@ -1649,105 +1651,7 @@ function PCRAnalysis({ apiKey }) {
     return () => { cancelled = true; };
   }, [autoTradePlan, autoTradingEnabled, selectedStrike, submittedAutoSignalKey]);
 
-  useEffect(() => {
-    const container = candleChartRef.current;
-    if (!container || candleData.length === 0) return undefined;
 
-    candleDataRef.current = candleData;
-    const chart = createChart(container, {
-      width: container.clientWidth,
-      height: 480,
-      layout: { background: { color: '#ffffff' }, textColor: '#334155' },
-      grid: {
-        vertLines: { color: '#f0f3f7', style: 1 },
-        horzLines: { color: '#f0f3f7', style: 1 },
-      },
-      rightPriceScale: {
-        borderColor: '#d1d5db',
-        textColor: '#334155',
-        scaleMargins: { top: 0.15, bottom: 0.15 },
-      },
-      timeScale: {
-        borderColor: '#d1d5db',
-        textColor: '#334155',
-        timeVisible: selectedInterval !== 'day',
-        secondsVisible: false,
-        tickMarkFormatter: (time) => {
-          const timestamp = typeof time === 'number' ? time * 1000 : Date.UTC(time.year, time.month - 1, time.day);
-          return new Intl.DateTimeFormat('en-IN', {
-            timeZone: 'Asia/Kolkata',
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: true,
-          }).format(timestamp);
-        },
-      },
-    });
-    const series = chart.addSeries(CandlestickSeries, {
-      upColor: '#26a69a',
-      downColor: '#ef5350',
-      borderUpColor: '#26a69a',
-      borderDownColor: '#ef5350',
-      wickUpColor: '#26a69a',
-      wickDownColor: '#ef5350',
-      borderVisible: true,
-      priceFormat: { type: 'price', precision: 2, minMove: 0.05 },
-    });
-    chartSeriesRef.current = series;
-    series.setData(candleData.map(candle => ({
-      time: Math.floor(candle.x / 1000),
-      open: candle.o,
-      high: candle.h,
-      low: candle.l,
-      close: candle.c,
-    })));
-    lastCandleOpenRef.current = candleData[candleData.length - 1]?.o || null;
-    const lastCandleTime = Math.floor((candleData[candleData.length - 1]?.x || Date.now()) / 1000);
-    const getIntervalSeconds = (interval) => {
-      const map = { minute: 60, '3-minute': 180, '5-minute': 300, '15-minute': 900, hour: 3600, day: 86400 };
-      return map[interval] || 60;
-    };
-    const getCandleBoundary = (timestamp, intervalSeconds) => {
-      return Math.floor(timestamp / intervalSeconds) * intervalSeconds;
-    };
-    const lastCandle = candleData[candleData.length - 1];
-    currentCandleBoundaryRef.current = getCandleBoundary(lastCandleTime, getIntervalSeconds(selectedInterval));
-    currentCandleDataRef.current = {
-      time: currentCandleBoundaryRef.current,
-      open: lastCandle?.o || null,
-      high: lastCandle?.h || null,
-      low: lastCandle?.l || null,
-      close: lastCandle?.c || null,
-    };
-    const ema10 = chart.addSeries(LineSeries, { color: '#fbbf24', lineWidth: 2.5, title: 'EMA 10', priceLineVisible: true, priceLineColor: '#fbbf24' });
-    const ema20 = chart.addSeries(LineSeries, { color: '#38bdf8', lineWidth: 2.5, title: 'EMA 20', priceLineVisible: true, priceLineColor: '#38bdf8' });
-    ema10SeriesRef.current = ema10;
-    ema20SeriesRef.current = ema20;
-    const ema10Arr = calculateEma(candleData, 10);
-    const ema20Arr = calculateEma(candleData, 20);
-    ema10.setData(ema10Arr);
-    ema20.setData(ema20Arr);
-    setEma10Data(ema10Arr);
-    setEma20Data(ema20Arr);
-    const markers = [];
-    const markerSeries = createSeriesMarkers(series, markers);
-    chart.timeScale().fitContent();
-
-    const resizeObserver = new ResizeObserver(() => {
-      if (!container.isConnected || container.clientWidth === 0) return;
-      chart.applyOptions({ width: container.clientWidth });
-    });
-    resizeObserver.observe(container);
-
-    return () => {
-      resizeObserver.disconnect();
-      markerSeries.detach();
-      chart.remove();
-      chartSeriesRef.current = null;
-      ema10SeriesRef.current = null;
-      ema20SeriesRef.current = null;
-    };
-  }, [candleData, selectedInterval, chartLoading]);
 
   const fetchPCRData = async () => {
     setLoading(true);
@@ -2049,28 +1953,16 @@ function PCRAnalysis({ apiKey }) {
           </div>
 
           <section className={`auto-trading-panel ${autoTradingEnabled ? 'armed' : ''}`}>
-            <div>
-              <h4>Automatic Trading</h4>
-              <span>{autoTradingStatus}</span>
-            </div>
-            <label className="auto-trading-acknowledgement">
-              <input
-                type="checkbox"
-                checked={autoTradingAcknowledged}
-                onChange={(event) => setAutoTradingAcknowledged(event.target.checked)}
-                disabled={autoTradingEnabled || autoTradingBusy}
-              />
-              I understand this places live Kite orders for one lot with a target and stop loss.
-            </label>
-            {autoTradePlan && <div className="auto-trade-levels">Next signal: {autoTradePlan.action} | Entry ₹{autoTradePlan.entry.toFixed(2)} | Target ₹{autoTradePlan.target.toFixed(2)} | Stop ₹{autoTradePlan.stopLoss.toFixed(2)}</div>}
-            <button
-              type="button"
-              className={autoTradingEnabled ? 'auto-trading-stop' : 'auto-trading-start'}
-              onClick={autoTradingEnabled ? stopAutomaticTrading : startAutomaticTrading}
-              disabled={autoTradingBusy || (!autoTradingEnabled && !autoTradingAcknowledged)}
-            >
-              {autoTradingBusy ? 'Working...' : autoTradingEnabled ? 'Stop Automatic Trading' : 'Start Automatic Trading'}
-            </button>
+            <AutoTradePanel
+              autoTradingEnabled={autoTradingEnabled}
+              autoTradingAcknowledged={autoTradingAcknowledged}
+              autoTradingStatus={autoTradingStatus}
+              autoTradingBusy={autoTradingBusy}
+              autoTradePlan={autoTradePlan}
+              onStartAutomaticTrading={startAutomaticTrading}
+              onStopAutomaticTrading={stopAutomaticTrading}
+              onAcknowledgeTrading={() => setAutoTradingAcknowledged(true)}
+            />
           </section>
 
           {chartLoading ? (
@@ -2079,7 +1971,21 @@ function PCRAnalysis({ apiKey }) {
             <div className="chart-stack">
               <section className="chart-block">
                 <h4>OHLC Candlesticks <span className="chart-legend"><i className="legend-candle" /> Candle <i className="legend-ema20" /> EMA10 <i className="legend-ema50" /> EMA20</span></h4>
-                <div ref={candleChartRef} className="chart-wrapper" />
+                <CandlestickChart
+                  candleData={candleData}
+                  ema10Data={ema10Data}
+                  ema20Data={ema20Data}
+                  selectedInterval={selectedInterval}
+                  livePrice={livePrice}
+                  onChartRef={(refs) => {
+                    chartSeriesRef.current = refs.chartSeriesRef.current;
+                    ema10SeriesRef.current = refs.ema10SeriesRef.current;
+                    ema20SeriesRef.current = refs.ema20SeriesRef.current;
+                    lastCandleOpenRef.current = refs.lastCandleOpenRef.current;
+                    currentCandleBoundaryRef.current = refs.currentCandleBoundaryRef.current;
+                    currentCandleDataRef.current = refs.currentCandleDataRef.current;
+                  }}
+                />
               </section>
 
               <section className="chart-block indicator-block">
