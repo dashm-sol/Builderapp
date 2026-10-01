@@ -30,13 +30,17 @@ function CandlestickChart({
   const lastCandleOpenRef = useRef(null);
   const currentCandleBoundaryRef = useRef(null);
   const currentCandleDataRef = useRef({ time: null, open: null, high: null, low: null, close: null });
+  const chartInstanceRef = useRef(null); // Track chart instance for disposal checking
 
   // Initialize chart on mount
   useEffect(() => {
     if (!candleChartRef.current || candleData.length === 0) return;
 
     const container = candleChartRef.current;
-    const chart = createChart(container, {
+    let chart = null;
+
+    try {
+      chart = createChart(container, {
       width: container.clientWidth,
       height: 480,
       layout: { background: { color: '#ffffff' }, textColor: '#334155' },
@@ -142,22 +146,57 @@ function CandlestickChart({
       currentCandleDataRef,
     });
 
-    // Cleanup
+    chartInstanceRef.current = chart; // Store chart instance
+    } catch (err) {
+      console.error('[CandlestickChart] Error initializing chart:', err.message);
+      // Null out refs if chart creation failed
+      chartSeriesRef.current = null;
+      ema10SeriesRef.current = null;
+      ema20SeriesRef.current = null;
+    }
+
+    // Cleanup - Properly dispose chart and null all refs
     return () => {
-      chart.remove();
+      try {
+        if (chart) {
+          chart.remove();
+          chart = null;
+        }
+      } catch (err) {
+        console.error('[CandlestickChart] Error removing chart:', err.message);
+      }
+      // Null out all refs to prevent use-after-free errors
+      chartInstanceRef.current = null;
+      chartSeriesRef.current = null;
+      ema10SeriesRef.current = null;
+      ema20SeriesRef.current = null;
     };
-  }, [candleData, selectedInterval]);
+  }, [candleData, selectedInterval, onChartRef]);
 
   // Update EMA data when it changes
   useEffect(() => {
     if (ema10SeriesRef.current && ema10Data && ema10Data.length > 0) {
-      ema10SeriesRef.current.setData(ema10Data);
+      try {
+        // Check if chart is still valid before updating
+        if (chartInstanceRef.current && typeof ema10SeriesRef.current.setData === 'function') {
+          ema10SeriesRef.current.setData(ema10Data);
+        }
+      } catch (err) {
+        console.error('[CandlestickChart] Error updating EMA10:', err.message);
+      }
     }
   }, [ema10Data]);
 
   useEffect(() => {
     if (ema20SeriesRef.current && ema20Data && ema20Data.length > 0) {
-      ema20SeriesRef.current.setData(ema20Data);
+      try {
+        // Check if chart is still valid before updating
+        if (chartInstanceRef.current && typeof ema20SeriesRef.current.setData === 'function') {
+          ema20SeriesRef.current.setData(ema20Data);
+        }
+      } catch (err) {
+        console.error('[CandlestickChart] Error updating EMA20:', err.message);
+      }
     }
   }, [ema20Data]);
 

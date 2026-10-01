@@ -263,6 +263,7 @@ async function armAutoExitOrders(activeTrade) {
     order_type: 'LIMIT',
     price: activeTrade.target.toFixed(2),
     validity: 'DAY',
+    market_protection: '-1',
     tag: 'AUTOTARGET',
   });
 
@@ -282,7 +283,13 @@ async function armAutoExitOrders(activeTrade) {
     activeTrade.targetOrderId = targetOrderId;
     activeTrade.stopOrderId = stopOrderId;
     activeTrade.entryComplete = true;
-    writeSessionDebugLog('auto-trade-exits-armed', { symbol: activeTrade.tradingsymbol, targetOrderId, stopOrderId });
+    writeSessionDebugLog('auto-trade-exits-armed', { 
+      symbol: activeTrade.tradingsymbol, 
+      targetOrderId, 
+      stopOrderId,
+      targetPrice: activeTrade.target.toFixed(2),
+      stopLossPrice: activeTrade.stopLoss.toFixed(2),
+    });
   } catch (error) {
     await Promise.allSettled([cancelKiteOrder(activeTrade.sessionData, targetOrderId)]);
     throw error;
@@ -774,6 +781,8 @@ app.post('/api/kite/auto-trading/signal', requireKiteSession, async (req, res) =
       target: normalizedTarget,
       stopLoss: normalizedStopLoss,
       entryComplete: false,
+      targetOrderId: null,
+      stopOrderId: null,
     };
     autoTradingState.lastSignalKey = signalKey;
     writeSessionDebugLog('auto-trade-entry-submitted', { symbol: normalizedSymbol, action: normalizedAction, entryOrderId });
@@ -784,8 +793,62 @@ app.post('/api/kite/auto-trading/signal', requireKiteSession, async (req, res) =
   }
 });
 
+// Get active trade status (entry + exit order IDs)
+app.get('/api/kite/auto-trading/active-trade', requireKiteSession, (req, res) => {
+  const activeTrade = autoTradingState.activeTrade;
+  if (!activeTrade) {
+    return res.json({ 
+      active: false, 
+      trade: null 
+    });
+  }
+
+  res.json({
+    active: true,
+    trade: {
+      symbol: activeTrade.tradingsymbol,
+      action: activeTrade.side,
+      target: activeTrade.target,
+      stopLoss: activeTrade.stopLoss,
+      quantity: activeTrade.quantity,
+      entryOrderId: activeTrade.entryOrderId,
+      entryComplete: activeTrade.entryComplete,
+      targetOrderId: activeTrade.targetOrderId,
+      stopOrderId: activeTrade.stopOrderId,
+      status: !activeTrade.entryComplete 
+        ? 'WAITING_ENTRY_FILL' 
+        : activeTrade.targetOrderId 
+        ? 'EXIT_ORDERS_ARMED' 
+        : 'UNKNOWN'
+    }
+  });
+});
+
 app.get('/api/kite/portfolio/holdings', requireKiteSession, (req, res) => {
   proxyKiteRequest(req, res, '/portfolio/holdings');
+});
+
+// Get all orders (for order status polling)
+app.get('/api/kite/orders', requireKiteSession, async (req, res) => {
+  try {
+    const sessionData = req.session.kite;
+    if (!sessionData || !sessionData.accessToken) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    const response = await axios.get(`${kiteBaseUrl}/orders`, {
+      headers: getKiteHeaders(sessionData),
+    });
+
+    const orders = response.data?.data || [];
+    console.log('[API] GET /orders - Retrieved', orders.length, 'orders');
+    res.json({ data: orders });
+  } catch (error) {
+    console.error('[API] GET /orders - Error:', error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data?.message || 'Failed to fetch orders',
+    });
+  }
 });
 
 app.get('/api/kite/quote', requireKiteSession, (req, res) => {

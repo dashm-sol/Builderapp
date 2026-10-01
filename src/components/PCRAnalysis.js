@@ -1183,7 +1183,7 @@ function PCRAnalysis({ apiKey }) {
             ema20SeriesRef.current.update(ema20Point);
           }
 
-          console.log(`[EMA] Update - EMA10: ${ema10Value.toFixed(2)}, EMA20: ${ema20Value.toFixed(2)}`);
+      //    console.log(`[EMA] Update - EMA10: ${ema10Value.toFixed(2)}, EMA20: ${ema20Value.toFixed(2)}`);
         }
       }
     } catch (err) {
@@ -1295,7 +1295,7 @@ function PCRAnalysis({ apiKey }) {
     } catch (err) {
       console.error('[RealTimeSignals] Failed to update signals with live price:', err);
     }
-  }, [livePrice, candleData, selectedStrike, selectedInterval, fiveMinuteCandleData, threeMinuteCandleData, lockedSignalKeys, signalRows]);
+  }, [livePrice, candleData, selectedStrike, selectedInterval, fiveMinuteCandleData, threeMinuteCandleData]);
 
   // Periodically redraw full EMA data to ensure visibility and consistency
   useEffect(() => {
