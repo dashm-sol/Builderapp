@@ -185,6 +185,29 @@ class KiteAPI {
       throw new Error('Failed to fetch option chain data.');
     }
   }
+
+  // Get all orders for status polling
+  async getOrders() {
+    try {
+      const response = await this.client.get('/orders');
+      console.log('[KiteAPI] getOrders() - Retrieved', response.data.data?.length || 0, 'orders');
+      return response.data.data || [];
+    } catch (error) {
+      console.error('[KiteAPI] getOrders() Error:', error);
+      throw new Error('Failed to fetch orders.');
+    }
+  }
+
+  // Get active auto-trade status (entry + exit order IDs)
+  async getActiveTrade() {
+    try {
+      const response = await this.client.get('/auto-trading/active-trade');
+      return response.data || { active: false, trade: null };
+    } catch (error) {
+      console.error('[KiteAPI] getActiveTrade() Error:', error);
+      return { active: false, trade: null };
+    }
+  }
 }
 
 export default KiteAPI;
