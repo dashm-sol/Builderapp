@@ -31,6 +31,8 @@ function AutoTradePanel({
   const handleAcknowledge = () => {
     onAcknowledgeTrading();
     setShowAcknowledgement(false);
+    // Start trading immediately after acknowledgement
+    setTimeout(() => onStartAutomaticTrading(), 100);
   };
 
   return (
