@@ -1267,8 +1267,52 @@ function PCRAnalysis({ apiKey }) {
           }
         }
 
-        setSignalRows(signalRowsWithCurrent);
-        setReverseSignalRows(buildReverseSignalRows(signalRowsWithCurrent));
+        // Monitor pending signals for target/stop loss hits
+        const monitoredSignalRows = signalRowsWithCurrent.map(signal => {
+          if (signal.outcome === 'Pending' && signal.entry && signal.target && signal.stopLoss) {
+            let updatedSignal = { ...signal };
+            let outcomeChanged = false;
+            
+            if (signal.action === 'BUY') {
+              if (livePrice >= signal.target) {
+                updatedSignal.outcome = 'True';
+                updatedSignal.evaluation = `Target ₹${signal.target.toFixed(2)} hit at ₹${livePrice.toFixed(2)}`;
+                outcomeChanged = true;
+              } else if (livePrice <= signal.stopLoss) {
+                updatedSignal.outcome = 'False';
+                updatedSignal.evaluation = `Stop loss ₹${signal.stopLoss.toFixed(2)} hit at ₹${livePrice.toFixed(2)}`;
+                outcomeChanged = true;
+              }
+            } else if (signal.action === 'SELL') {
+              if (livePrice <= signal.target) {
+                updatedSignal.outcome = 'True';
+                updatedSignal.evaluation = `Target ₹${signal.target.toFixed(2)} hit at ₹${livePrice.toFixed(2)}`;
+                outcomeChanged = true;
+              } else if (livePrice >= signal.stopLoss) {
+                updatedSignal.outcome = 'False';
+                updatedSignal.evaluation = `Stop loss ₹${signal.stopLoss.toFixed(2)} hit at ₹${livePrice.toFixed(2)}`;
+                outcomeChanged = true;
+              }
+            }
+            
+            // Auto-exit trade if outcome changed and auto-trading is enabled
+            if (outcomeChanged && autoTradingEnabled) {
+              const exitAction = signal.action === 'BUY' ? 'SELL' : 'BUY';
+              const exitPrice = updatedSignal.outcome === 'True' ? signal.target : signal.stopLoss;
+              console.log(`[AutoTrade Exit] Executing ${exitAction} exit at ₹${exitPrice.toFixed(2)} for signal outcome: ${updatedSignal.outcome}`);
+              
+              // Call auto-exit trade function (implement in kiteAPI)
+              executeAutoTradeExit(signal, exitAction, exitPrice, updatedSignal.outcome)
+                .catch(err => console.error('[AutoTrade Exit] Failed to execute exit:', err));
+            }
+            
+            return updatedSignal;
+          }
+          return signal;
+        });
+
+        setSignalRows(monitoredSignalRows);
+        setReverseSignalRows(buildReverseSignalRows(monitoredSignalRows));
 
         // Update EMA series on chart if they exist - use latest point only
         const newEma10 = calculateEma(updatedCandleData, 10);
@@ -1651,7 +1695,43 @@ function PCRAnalysis({ apiKey }) {
     return () => { cancelled = true; };
   }, [autoTradePlan, autoTradingEnabled, selectedStrike, submittedAutoSignalKey]);
 
+  // Auto-execute exit trades when signal outcome changes
+  const executeAutoTradeExit = async (signal, exitAction, exitPrice, outcome) => {
+    if (!autoTradingEnabled || !selectedStrike) {
+      console.log('[AutoTradeExit] Auto-trading not enabled or strike not selected');
+      return;
+    }
 
+    try {
+      setAutoTradingBusy(true);
+      const kiteAPI = new KiteAPI();
+      
+      const exitOrder = await kiteAPI.submitAutomaticSignal({
+        action: exitAction,
+        exchange: 'NFO',
+        tradingsymbol: selectedStrike.tradingsymbol,
+        quantity: Number(selectedStrike.lotSize) || 1,
+        entry: exitPrice,
+        target: null, // Exit order has no target
+        stopLoss: null, // Exit order has no stop loss
+        signalTime: Date.now(),
+      });
+
+      setAutoTradingStatus(
+        outcome === 'True'
+          ? `✓ Target hit! Exit ${exitAction} order placed at ₹${exitPrice.toFixed(2)} (Order ID: ${exitOrder.orderId})`
+          : `✗ Stop loss hit! Exit ${exitAction} order placed at ₹${exitPrice.toFixed(2)} (Order ID: ${exitOrder.orderId})`
+      );
+      
+      console.log(`[AutoTradeExit] Exit order submitted for outcome ${outcome} at ₹${exitPrice.toFixed(2)}`);
+    } catch (err) {
+      const errorMsg = err.response?.data?.error || err.message || 'Failed to execute exit order';
+      setAutoTradingStatus(`Auto-exit failed: ${errorMsg}`);
+      console.error('[AutoTradeExit] Failed to execute:', err);
+    } finally {
+      setAutoTradingBusy(false);
+    }
+  };
 
   const fetchPCRData = async () => {
     setLoading(true);
