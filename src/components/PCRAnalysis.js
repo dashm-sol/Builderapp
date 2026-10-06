@@ -1840,11 +1840,11 @@ function PCRAnalysis({ apiKey }) {
     .map(option => option.expiry).filter((expiry, index, values) => values.indexOf(expiry) === index).sort();
   const visibleStrikeOptions = strikeOptions.filter(option => option.instrument === selectedInstrument && option.expiry === selectedExpiry);
 
-  // Get unique days from signal rows
+  // Get unique days from signal rows (last 10 trading days only)
   const uniqueDays = [...new Set(signalRows.map(signal => {
     const date = new Date(signal.time);
     return date.toLocaleDateString('en-IN', { year: 'numeric', month: '2-digit', day: '2-digit' });
-  }))].sort().reverse();
+  }))].sort().reverse().slice(0, TRADING_CONSTANTS.MAX_TRADING_DAYS);
 
   // Filter by action and day
   const filteredSignalRows = signalRows.filter(signal => {

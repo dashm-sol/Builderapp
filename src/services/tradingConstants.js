@@ -1,9 +1,12 @@
 // Trading Configuration Constants
 export const TRADING_CONSTANTS = {
   // Default number of candles for pattern detection
-  DEFAULT_CANDLES: 20,
+  DEFAULT_CANDLES: 30,
   MIN_CANDLES: 10,
   MAX_CANDLES: 200,
+  
+  // Maximum number of trading days to display in day filter dropdown
+  MAX_TRADING_DAYS: 10,
   
   // Pattern detection thresholds
   CHART_PATTERN_TOLERANCE: 0.01, // 1% for normal charts
