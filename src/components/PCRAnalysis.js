@@ -881,9 +881,51 @@ function buildReverseSignalRows(signalRows) {
   });
 }
 
-// Helper function to generate signal key for locking
-function getSignalKey(signal) {
-  return `${signal.action}-${Math.floor(signal.time / 60000)}`; // action + minute timestamp
+// Helper function to generate EMA strategy signals (loss-making strategy - trades against EMA)
+function buildEmaStrategyRows(signalRows, emaData) {
+  // EMA strategy: contrarian signals that trade against EMA direction
+  // This is typically a loss-making strategy used to identify when NOT to trade
+  return signalRows.map(signal => {
+    const emaValue = emaData?.ema20 || 0;
+    const closePrice = signal.entry || 0;
+    
+    // Invert the original signal
+    const emaAction = signal.action === 'BUY' ? 'SELL' : 'BUY';
+    
+    // EMA Strategy levels (opposite of main strategy)
+    // Entry: slightly worse than main entry
+    const emaEntry = signal.action === 'BUY' 
+      ? signal.entry + (signal.entry * 0.002)  // 0.2% worse for SELL
+      : signal.entry - (signal.entry * 0.002); // 0.2% worse for BUY
+    
+    // Target: half the distance of main strategy target
+    const emaTarget = signal.action === 'BUY'
+      ? signal.stopLoss - ((signal.entry - signal.stopLoss) * 0.5)
+      : signal.stopLoss + ((signal.stopLoss - signal.entry) * 0.5);
+    
+    // StopLoss: at main strategy target (high risk)
+    const emaStopLoss = signal.target;
+    
+    // EMA Strategy usually loses money (inverted outcome)
+    let emaOutcome = 'Pending';
+    if (signal.outcome === 'True') {
+      emaOutcome = 'False'; // Original won, EMA loses
+    } else if (signal.outcome === 'False') {
+      emaOutcome = 'True';  // Original lost, EMA wins (rare)
+    }
+
+    return {
+      ...signal,
+      action: emaAction,
+      entry: emaEntry,
+      target: emaTarget,
+      stopLoss: emaStopLoss,
+      outcome: emaOutcome,
+      reason: `EMA Contrarian: Against ${signal.reason}`,
+      isEmaStrategy: true,
+      evaluation: emaOutcome === 'Pending' ? 'Pending outcome' : emaOutcome === 'True' ? 'Profit (Rare)' : 'Loss (Expected)',
+    };
+  });
 }
 
 // Helper function to update signal exit details
@@ -919,6 +961,7 @@ function PCRAnalysis({ apiKey }) {
   const [submittedAutoSignalKey, setSubmittedAutoSignalKey] = useState('');
   const [signalRows, setSignalRows] = useState([]);
   const [reverseSignalRows, setReverseSignalRows] = useState([]);
+  const [emaStrategyRows, setEmaStrategyRows] = useState([]);
   const [signalFilter, setSignalFilter] = useState('ALL');
   const [dayFilter, setDayFilter] = useState(new Date().toLocaleDateString('en-IN', { year: 'numeric', month: '2-digit', day: '2-digit' })); // Default to current day
   const [fiveMinuteCandleData, setFiveMinuteCandleData] = useState([]);
@@ -972,6 +1015,8 @@ function PCRAnalysis({ apiKey }) {
   }, []);
 
   // Method to lock a signal (freeze entry details)
+  const getSignalKey = (signal) => `${signal.time}-${signal.action}`;
+
   const lockSignal = (signal) => {
     const signalKey = getSignalKey(signal);
     setLockedSignalKeys(prev => new Set([...prev, signalKey]));
@@ -1313,6 +1358,7 @@ function PCRAnalysis({ apiKey }) {
 
         setSignalRows(monitoredSignalRows);
         setReverseSignalRows(buildReverseSignalRows(monitoredSignalRows));
+        setEmaStrategyRows(buildEmaStrategyRows(monitoredSignalRows, { ema20: calculateEma(updatedCandleData, 20).at(-1)?.value || 0 }));
 
         // Update EMA series on chart if they exist - use latest point only
         const newEma10 = calculateEma(updatedCandleData, 10);
@@ -1391,7 +1437,8 @@ function PCRAnalysis({ apiKey }) {
   // Generate reverse signals from signal rows
   useEffect(() => {
     setReverseSignalRows(buildReverseSignalRows(signalRows));
-  }, [signalRows]);
+    setEmaStrategyRows(buildEmaStrategyRows(signalRows, { ema20: ema20Data.at(-1)?.value || 0 }));
+  }, [signalRows, ema20Data]);
 
   const fetchRealPCR = async (strike) => {
     if (!strike?.instrumentToken) return;
@@ -1873,6 +1920,43 @@ function PCRAnalysis({ apiKey }) {
     .filter(signal => signal.outcome === 'Pending')
     .reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
 
+  // EMA Strategy signals filtering and calculations
+  const filteredEmaStrategyRows = emaStrategyRows.filter(signal => {
+    const actionMatch = signalFilter === 'ALL' || signal.action === signalFilter;
+    if (!actionMatch) return false;
+
+    if (dayFilter === 'ALL') return true;
+    const signalDate = new Date(signal.time).toLocaleDateString('en-IN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+    return signalDate === dayFilter;
+  });
+
+  const evaluatedEmaSignals = filteredEmaStrategyRows.filter(signal => signal.outcome === 'True' || signal.outcome === 'False');
+  const successfulEmaSignals = evaluatedEmaSignals.filter(signal => signal.outcome === 'True');
+  const emaOverallSuccess = evaluatedEmaSignals.length > 0
+    ? (successfulEmaSignals.length / evaluatedEmaSignals.length) * 100
+    : 0;
+  const latestEmaSignalTradeCost = filteredEmaStrategyRows.length > 0
+    ? tradeCostForSignal(filteredEmaStrategyRows[0])
+    : null;
+  const emaWinAmount = evaluatedEmaSignals
+    .filter(signal => signal.outcome === 'True')
+    .reduce((total, signal) => total + (Math.abs(signal.target - signal.entry) * lotSize) + tradeCostForSignal(signal).totalCharges, 0);
+  const emaLossAmount = evaluatedEmaSignals
+    .filter(signal => signal.outcome === 'False')
+    .reduce((total, signal) => total + (Math.abs(signal.stopLoss - signal.entry) * lotSize) + tradeCostForSignal(signal).totalCharges, 0);
+  const emaWinAmountPercent = (emaWinAmount + emaLossAmount) > 0 ? (emaWinAmount / (emaWinAmount + emaLossAmount)) * 100 : 0;
+  const emaRealizedInvestment = evaluatedEmaSignals.reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
+  const emaRealizedProfitLoss = evaluatedEmaSignals.reduce((total, signal) => {
+    const priceMove = signal.outcome === 'True'
+      ? Math.abs(signal.target - signal.entry)
+      : -Math.abs(signal.stopLoss - signal.entry);
+    const cost = tradeCostForSignal(signal);
+    return total + ((priceMove * lotSize) - cost.totalCharges);
+  }, 0);
+  const emaPendingInvestment = filteredEmaStrategyRows
+    .filter(signal => signal.outcome === 'Pending')
+    .reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
+
   const downloadSignalsJson = () => {
     const exportData = {
       exportedAt: new Date().toISOString(),
@@ -2303,6 +2387,77 @@ function PCRAnalysis({ apiKey }) {
             )}
           </section>
         </div>
+
+        <section className="signal-table-panel">
+            <div className="signal-table-header">
+              <h3>📉 EMA Strategy (Loss-Making)</h3>
+              <div className="signal-summary">
+                <span>Overall Success: <b style={{ color: emaOverallSuccess > 50 ? '#22c55e' : '#ef4444' }}>{emaOverallSuccess.toFixed(2)}%</b> ({successfulEmaSignals.length}/{evaluatedEmaSignals.length})</span>
+                <span>Realized P/L: <b style={{ color: emaRealizedProfitLoss >= 0 ? '#22c55e' : '#ef4444' }}>₹{emaRealizedProfitLoss.toFixed(2)}</b> | Invested: ₹{emaRealizedInvestment.toFixed(2)}</span>
+                <span>Pending Investment: <b style={{ color: '#f59e0b' }}>₹{emaPendingInvestment.toFixed(2)}</b> ({filteredEmaStrategyRows.filter(s => s.outcome === 'Pending').length} signals)</span>
+                <span>Win/Loss Ratio: <b style={{ color: emaWinAmountPercent > 50 ? '#22c55e' : '#ef4444' }}>{emaWinAmountPercent.toFixed(2)}%</b> | W: ₹{emaWinAmount.toFixed(2)} / L: ₹{emaLossAmount.toFixed(2)}</span>
+              </div>
+            </div>
+
+            {filteredEmaStrategyRows.length === 0 ? (
+              <div className="signal-table-empty">No EMA strategy signals to display in this range.</div>
+            ) : (
+              <div className="signal-table-scroll">
+                <table className="signal-table">
+                  <thead>
+                    <tr>
+                      <th>Signal Time</th>
+                      <th>Buy/Sell</th>
+                      <th>Buy/Sell Price</th>
+                      <th>Trade Cost</th>
+                      <th>Candlestick</th>
+                      <th>Chart pattern</th>
+                      {selectedInterval === 'minute' && <th>1m Chart Structure</th>}
+                      {selectedInterval === 'minute' && <th>3m Chart Structure</th>}
+                      {selectedInterval === 'minute' && <th>5m Chart Structure</th>}
+                      {selectedInterval === 'minute' && <th>1m EMA 10/20</th>}
+                      <th>Entry</th>
+                      <th>Target</th>
+                      <th>Stop loss</th>
+                      <th>Exit Price</th>
+                      <th>Profit/Loss Points</th>
+                      <th>Result</th>
+                      <th>Evaluation</th>
+                      <th>Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredEmaStrategyRows.map((signal, index) => {
+                      const parts = signal.pattern.split(' | ');
+                      const tradeCost = tradeCostForSignal(signal);
+                      return (
+                        <tr key={`ema-${signal.time}-${index}`}>
+                          <td>{new Date(signal.time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
+                          <td><span className={`signal-pill ${signal.action.toLowerCase()}`}>{signal.action}</span></td>
+                          <td>₹{Number(signal.entry).toFixed(2)}</td>
+                          <td>₹{tradeCost.totalCashRequired.toFixed(2)}<small>Premium ₹{tradeCost.notional.toFixed(2)} + fees ₹{tradeCost.totalCharges.toFixed(2)}</small></td>
+                          <td>{parts[0].replace('Liquidity sweep + ', '').replace('Institutional ', '')}</td>
+                          <td>{parts[1] || 'Confirmed structure'}</td>
+                          {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.chart || 'No chart structure confirmation'}</td>}
+                          {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.threeMinuteChart || 'No 3m chart structure confirmation'}</td>}
+                          {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.fiveMinuteChart || 'No 5m chart structure confirmation'}</td>}
+                          {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.emaStatus || 'EMA confirmation unavailable'}<small>{signal.minuteConfirmation?.ema || ''}</small></td>}
+                          <td>₹{Number(signal.entry).toFixed(2)}</td>
+                          <td>₹{Number(signal.target).toFixed(2)}<small>(EMA Contrarian Target)</small></td>
+                          <td>₹{Number(signal.stopLoss).toFixed(2)}<small>(EMA Contrarian SL)</small></td>
+                          <td>₹{Number(signal.outcome === 'True' ? signal.target : signal.outcome === 'False' ? signal.stopLoss : signal.entry).toFixed(2)}</td>
+                          <td className={signal.outcome === 'Pending' ? '' : signal.outcome === 'True' ? 'profit' : 'loss'}>{(signal.action === 'BUY' ? (signal.outcome === 'True' ? signal.target - signal.entry : signal.outcome === 'False' ? signal.stopLoss - signal.entry : 0) : (signal.outcome === 'True' ? signal.entry - signal.target : signal.outcome === 'False' ? signal.entry - signal.stopLoss : 0)).toFixed(2)} pts</td>
+                          <td><span className={`outcome-pill ${signal.outcome.toLowerCase()}`}>{signal.outcome}</span></td>
+                          <td>{signal.evaluation}</td>
+                          <td>{signal.reason}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
 
         <div className="pcr-details">
           <h3>📊 Detailed Statistics</h3>
