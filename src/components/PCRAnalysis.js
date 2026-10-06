@@ -16,6 +16,7 @@ import './PCRAnalysis.css';
 import KiteAPI from '../services/kiteAPI';
 import CandlestickChart from './CandlestickChart';
 import AutoTradePanel from './AutoTradePanel';
+import { TRADING_CONSTANTS, TIMEFRAME_OPTIONS as TIMEFRAME_OPTIONS_CONST, SIGNAL_ACTIONS, SIGNAL_OUTCOMES } from '../services/tradingConstants';
 
 ChartJS.register(
   LinearScale,
@@ -27,7 +28,7 @@ ChartJS.register(
   Filler,
 );
 
-const TIMEFRAME_OPTIONS = ['minute', '3minute', '5minute', '10minute', '15minute', '30minute', '60minute', 'day'];
+const TIMEFRAME_OPTIONS = TIMEFRAME_OPTIONS_CONST;
 
 function calculateEma(candles, period) {
   const multiplier = 2 / (period + 1);
@@ -38,7 +39,7 @@ function calculateEma(candles, period) {
   });
 }
 
-function calculateRsi(candles, period = 14) {
+function calculateRsi(candles, period = TRADING_CONSTANTS.RSI_PERIOD) {
   return candles.map((candle, index) => {
     if (index < period) return { x: candle.x, y: null };
     let gains = 0;
@@ -62,7 +63,7 @@ function detectCandlestickPatterns(candles, index) {
   const threeBack = candles[index - 3];
   if (!current || !previous) return { bullish: [], bearish: [], neutral: [] };
   const body = Math.abs(current.c - current.o);
-  const range = Math.max(current.h - current.l, 0.0001);
+  const range = Math.max(current.h - current.l, TRADING_CONSTANTS.MIN_PRICE_PRECISION);
   const upperWick = current.h - Math.max(current.o, current.c);
   const lowerWick = Math.min(current.o, current.c) - current.l;
   const bullish = [];
@@ -70,43 +71,43 @@ function detectCandlestickPatterns(candles, index) {
   const neutral = [];
   const isBull = current.c > current.o;
   const isBear = current.c < current.o;
-  const smallBody = body <= range * 0.1;
-  const previousRange = previous ? Math.max(previous.h - previous.l, 0.0001) : 0.0001;
+  const smallBody = body <= range * TRADING_CONSTANTS.DOJI_BODY_RATIO;
+  const previousRange = previous ? Math.max(previous.h - previous.l, TRADING_CONSTANTS.MIN_PRICE_PRECISION) : TRADING_CONSTANTS.MIN_PRICE_PRECISION;
   const previousBody = previous ? Math.abs(previous.c - previous.o) : 0;
-  const previousDoji = previousBody <= previousRange * 0.1;
+  const previousDoji = previousBody <= previousRange * TRADING_CONSTANTS.DOJI_BODY_RATIO;
   const bullishEngulfing = isBull && previous.c < previous.o && current.o <= previous.c && current.c >= previous.o;
   const bearishEngulfing = isBear && previous.c > previous.o && current.o >= previous.c && current.c <= previous.o;
 
   if (smallBody) neutral.push('Doji');
-  if (smallBody && lowerWick >= range * 0.6) bullish.push('Dragonfly doji');
-  if (smallBody && upperWick >= range * 0.6) bearish.push('Gravestone doji');
-  if (body <= range * 0.35 && upperWick >= body && lowerWick >= body) neutral.push('Spinning top');
-  if (isBull && body >= range * 0.8) bullish.push('Bullish marubozu');
-  if (isBear && body >= range * 0.8) bearish.push('Bearish marubozu');
-  if (isBull && lowerWick >= body * 2 && upperWick <= range * 0.25) bullish.push('Hammer');
-  if (isBull && upperWick >= body * 2 && lowerWick <= range * 0.25) bullish.push('Inverted hammer');
-  if (isBear && lowerWick >= body * 2 && upperWick <= range * 0.25) bearish.push('Hanging man');
-  if (isBear && upperWick >= body * 2 && lowerWick <= range * 0.25) bearish.push('Shooting star');
+  if (smallBody && lowerWick >= range * TRADING_CONSTANTS.WICK_RATIO) bullish.push('Dragonfly doji');
+  if (smallBody && upperWick >= range * TRADING_CONSTANTS.WICK_RATIO) bearish.push('Gravestone doji');
+  if (body <= range * TRADING_CONSTANTS.SPINNING_TOP_BODY_RATIO && upperWick >= body && lowerWick >= body) neutral.push('Spinning top');
+  if (isBull && body >= range * TRADING_CONSTANTS.MARUBOZU_BODY_RATIO) bullish.push('Bullish marubozu');
+  if (isBear && body >= range * TRADING_CONSTANTS.MARUBOZU_BODY_RATIO) bearish.push('Bearish marubozu');
+  if (isBull && lowerWick >= body * 2 && upperWick <= range * TRADING_CONSTANTS.WICK_OPPOSITE_RATIO) bullish.push('Hammer');
+  if (isBull && upperWick >= body * 2 && lowerWick <= range * TRADING_CONSTANTS.WICK_OPPOSITE_RATIO) bullish.push('Inverted hammer');
+  if (isBear && lowerWick >= body * 2 && upperWick <= range * TRADING_CONSTANTS.WICK_OPPOSITE_RATIO) bearish.push('Hanging man');
+  if (isBear && upperWick >= body * 2 && lowerWick <= range * TRADING_CONSTANTS.WICK_OPPOSITE_RATIO) bearish.push('Shooting star');
   if (bullishEngulfing) bullish.push('Bullish engulfing');
   if (bearishEngulfing) bearish.push('Bearish engulfing');
   if (previous.c < previous.o && isBull && current.o <= previous.c && current.c > (previous.o + previous.c) / 2) bullish.push('Piercing line');
   if (previous.c > previous.o && isBear && current.o >= previous.c && current.c < (previous.o + previous.c) / 2) bearish.push('Dark cloud cover');
-  if (Math.abs(current.l - previous.l) / Math.max(previous.l, 0.0001) < 0.002 && isBull) bullish.push('Tweezer bottom');
-  if (Math.abs(current.h - previous.h) / Math.max(previous.h, 0.0001) < 0.002 && isBear) bearish.push('Tweezer top');
+  if (Math.abs(current.l - previous.l) / Math.max(previous.l, TRADING_CONSTANTS.MIN_PRICE_PRECISION) < TRADING_CONSTANTS.PRICE_TOLERANCE_CHART && isBull) bullish.push('Tweezer bottom');
+  if (Math.abs(current.h - previous.h) / Math.max(previous.h, TRADING_CONSTANTS.MIN_PRICE_PRECISION) < TRADING_CONSTANTS.PRICE_TOLERANCE_CHART && isBear) bearish.push('Tweezer top');
 
   // 1-Minute Specific Patterns (High Probability for Scalping)
   // Pin Bar / Rejection Candle (long wick, small body at opposite end)
-  const pinBarThreshold = range * 0.3;
-  if (isBull && lowerWick >= body * 3 && upperWick <= body * 0.5) bullish.push('Pin bar up');
-  if (isBear && upperWick >= body * 3 && lowerWick <= body * 0.5) bearish.push('Pin bar down');
+  const pinBarThreshold = range * TRADING_CONSTANTS.PIN_BAR_OPPOSITE_RATIO;
+  if (isBull && lowerWick >= body * TRADING_CONSTANTS.PIN_BAR_BODY_MULTIPLIER && upperWick <= body * TRADING_CONSTANTS.PIN_BAR_OPPOSITE_RATIO) bullish.push('Pin bar up');
+  if (isBear && upperWick >= body * TRADING_CONSTANTS.PIN_BAR_BODY_MULTIPLIER && lowerWick <= body * TRADING_CONSTANTS.PIN_BAR_OPPOSITE_RATIO) bearish.push('Pin bar down');
 
   // Strong Reversal (opposite to previous trend with conviction)
-  if (previous && previous.c < previous.o && isBull && body >= previousBody * 1.5) bullish.push('Strong reversal up');
-  if (previous && previous.c > previous.o && isBear && body >= previousBody * 1.5) bearish.push('Strong reversal down');
+  if (previous && previous.c < previous.o && isBull && body >= previousBody * TRADING_CONSTANTS.REVERSAL_BODY_MULTIPLIER) bullish.push('Strong reversal up');
+  if (previous && previous.c > previous.o && isBear && body >= previousBody * TRADING_CONSTANTS.REVERSAL_BODY_MULTIPLIER) bearish.push('Strong reversal down');
 
   // Break of Previous Candle (aggressive directional move)
-  if (isBull && current.c > previous.h && body >= range * 0.6) bullish.push('Break above previous');
-  if (isBear && current.c < previous.l && body >= range * 0.6) bearish.push('Break below previous');
+  if (isBull && current.c > previous.h && body >= range * TRADING_CONSTANTS.BREAK_BODY_RATIO) bullish.push('Break above previous');
+  if (isBear && current.c < previous.l && body >= range * TRADING_CONSTANTS.BREAK_BODY_RATIO) bearish.push('Break below previous');
 
   if (beforePrevious) {
     if (beforePrevious.c < beforePrevious.o && previous.c < previous.o && isBull && current.c > beforePrevious.o) bullish.push('Morning star');
@@ -136,14 +137,14 @@ function detectCandlestickPatterns(candles, index) {
   return { bullish, bearish, neutral };
 }
 
-function findChartPatterns(candles, isOneMinute = false) {
-  const recent = candles.slice(-40);
+function findChartPatterns(candles, isOneMinute = false, numCandles = TRADING_CONSTANTS.DEFAULT_CANDLES) {
+  const recent = candles.slice(-numCandles);
   const highs = recent.filter((candle, index) => index > 0 && index < recent.length - 1 && candle.h >= recent[index - 1].h && candle.h >= recent[index + 1].h);
   const lows = recent.filter((candle, index) => index > 0 && index < recent.length - 1 && candle.l <= recent[index - 1].l && candle.l <= recent[index + 1].l);
 
   // For 1-minute trading, use tighter tolerance (0.5% instead of 1%)
-  const tolerance = isOneMinute ? 0.005 : 0.01;
-  const matchLevel = (items, field) => items.length >= 2 && Math.abs(items.at(-1)[field] - items.at(-2)[field]) / Math.max(items.at(-2)[field], 0.0001) < tolerance;
+  const tolerance = isOneMinute ? TRADING_CONSTANTS.CHART_PATTERN_TOLERANCE_1MIN : TRADING_CONSTANTS.CHART_PATTERN_TOLERANCE;
+  const matchLevel = (items, field) => items.length >= 2 && Math.abs(items.at(-1)[field] - items.at(-2)[field]) / Math.max(items.at(-2)[field], TRADING_CONSTANTS.MIN_PRICE_PRECISION) < tolerance;
   const patterns = [];
   if (highs.length >= 3 && matchLevel(highs, 'h')) patterns.push('Triple top');
   else if (highs.length >= 2 && matchLevel(highs, 'h')) patterns.push('Double top');
@@ -242,10 +243,10 @@ function classifyChartPatterns(patterns) {
 }
 
 // 1-MINUTE ONLY: Detect 8 specific breakout patterns with entry and stop levels
-function detectOneMinuteBreakoutPatterns(candles) {
-  if (candles.length < 30) return { bullish: [], bearish: [], breakoutLevels: {} };
+function detectOneMinuteBreakoutPatterns(candles, numCandles = TRADING_CONSTANTS.DEFAULT_CANDLES) {
+  if (candles.length < TRADING_CONSTANTS.MIN_CANDLES_FOR_ONEMIN) return { bullish: [], bearish: [], breakoutLevels: {} };
 
-  const recent = candles.slice(-40);
+  const recent = candles.slice(-numCandles);
   const highs = recent.filter((c, i) => i > 0 && i < recent.length - 1 && c.h >= recent[i - 1].h && c.h >= recent[i + 1].h);
   const lows = recent.filter((c, i) => i > 0 && i < recent.length - 1 && c.l <= recent[i - 1].l && c.l <= recent[i + 1].l);
 
@@ -257,7 +258,7 @@ function detectOneMinuteBreakoutPatterns(candles) {
   if (lows.length >= 2) {
     const lastLow = lows.at(-1).l;
     const secondLastLow = lows.at(-2).l;
-    if (Math.abs(lastLow - secondLastLow) / Math.max(lastLow, secondLastLow) < 0.005) { // Within 0.5%
+    if (Math.abs(lastLow - secondLastLow) / Math.max(lastLow, secondLastLow) < TRADING_CONSTANTS.DOUBLE_BOTTOM_TOLERANCE) {
       const peaksBetween = recent.filter(c => c.h > lastLow && c.h > secondLastLow);
       const centralPeak = Math.max(...peaksBetween.map(c => c.h));
       bullish.push('Double Bottom');
@@ -480,16 +481,16 @@ function getMarketConfirmations(candles) {
   };
 }
 
-function calculateInstitutionalTradeSignal(candles) {
-  if (candles.length < 20) {
-    return { action: 'HOLD', pattern: 'Insufficient data', reason: 'Need at least 20 candles for 5-minute analysis' };
+function calculateInstitutionalTradeSignal(candles, numCandles = 40) {
+  if (candles.length < TRADING_CONSTANTS.MIN_CANDLES_FOR_INSTITUTIONAL) {
+    return { action: SIGNAL_ACTIONS.HOLD, pattern: 'Insufficient data', reason: 'Need at least 20 candles for 5-minute analysis' };
   }
-  const recent = candles.slice(-40);
-  const chartPatterns = classifyChartPatterns(findChartPatterns(recent, false));
+  const recent = candles.slice(-numCandles);
+  const chartPatterns = classifyChartPatterns(findChartPatterns(recent, false, numCandles));
 
   if (chartPatterns.bullish.length > 0) {
     return {
-      action: 'BUY',
+      action: SIGNAL_ACTIONS.BUY,
       pattern: `Chart Pattern: ${chartPatterns.bullish.join(', ')}`,
       reason: `Bullish chart patterns detected: ${chartPatterns.bullish.join(', ')}`,
     };
@@ -497,7 +498,7 @@ function calculateInstitutionalTradeSignal(candles) {
 
   if (chartPatterns.bearish.length > 0) {
     return {
-      action: 'SELL',
+      action: SIGNAL_ACTIONS.SELL,
       pattern: `Chart Pattern: ${chartPatterns.bearish.join(', ')}`,
       reason: `Bearish chart patterns detected: ${chartPatterns.bearish.join(', ')}`,
     };
@@ -510,17 +511,17 @@ function calculateInstitutionalTradeSignal(candles) {
   };
 }
 
-function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = [], threeMinuteCandles = []) {
+function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = [], threeMinuteCandles = [], numCandles = TRADING_CONSTANTS.DEFAULT_CANDLES) {
   // 1-MINUTE: ONLY 8 BREAKOUT PATTERNS WITH PATTERN-BASED ENTRY & STOP
-  if (candles.length < 30) {
+  if (candles.length < TRADING_CONSTANTS.MIN_CANDLES_FOR_ONEMIN) {
     return {
-      action: 'HOLD',
+      action: SIGNAL_ACTIONS.HOLD,
       pattern: 'Insufficient data',
-      reason: 'Need at least 30 one-minute candles',
+      reason: `Need at least ${TRADING_CONSTANTS.MIN_CANDLES_FOR_ONEMIN} one-minute candles`,
     };
   }
 
-  const patterns = detectOneMinuteBreakoutPatterns(candles);
+  const patterns = detectOneMinuteBreakoutPatterns(candles, numCandles);
 
   if (patterns.bullish.length > 0) {
     const patternName = patterns.bullish[0];
@@ -588,14 +589,14 @@ function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = [], threeMin
 
 function isBeforeThreePmIst(timestamp) {
   const indiaTime = new Date(new Date(timestamp).toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-  return indiaTime.getHours() * 60 + indiaTime.getMinutes() < 15 * 60;
+  return indiaTime.getHours() * 60 + indiaTime.getMinutes() < TRADING_CONSTANTS.TRADING_CLOSE_HOUR * 60 + TRADING_CONSTANTS.TRADING_CLOSE_MINUTE;
 }
 
-function calculateTradeSignal(candles, oneMinuteMode = false, fiveMinuteCandles = [], threeMinuteCandles = []) {
-  const signal = oneMinuteMode ? calculateOneMinuteTradeSignal(candles, fiveMinuteCandles, threeMinuteCandles) : calculateInstitutionalTradeSignal(candles);
-  if (['BUY', 'SELL'].includes(signal.action) && !isBeforeThreePmIst(candles.at(-1)?.x)) {
+function calculateTradeSignal(candles, oneMinuteMode = false, fiveMinuteCandles = [], threeMinuteCandles = [], numCandles = TRADING_CONSTANTS.DEFAULT_CANDLES) {
+  const signal = oneMinuteMode ? calculateOneMinuteTradeSignal(candles, fiveMinuteCandles, threeMinuteCandles, numCandles) : calculateInstitutionalTradeSignal(candles, numCandles);
+  if ([SIGNAL_ACTIONS.BUY, SIGNAL_ACTIONS.SELL].includes(signal.action) && !isBeforeThreePmIst(candles.at(-1)?.x)) {
     return {
-      action: 'HOLD',
+      action: SIGNAL_ACTIONS.HOLD,
       pattern: 'New entries disabled after 3:00 PM IST',
       reason: 'No new BUY or SELL signal is allowed after 3:00 PM IST. Existing positions must close using their target, stop loss, or intraday square-off.',
     };
@@ -603,7 +604,7 @@ function calculateTradeSignal(candles, oneMinuteMode = false, fiveMinuteCandles 
   return signal;
 }
 
-function calculateTradeLevels(candles, signal, oneMinuteMode = false) {
+function calculateTradeLevels(candles, signal, oneMinuteMode = false, numCandles = TRADING_CONSTANTS.DEFAULT_CANDLES) {
   const signalCandle = candles.at(-1);
   const entry = signalCandle.c;
 
@@ -650,7 +651,7 @@ function calculateTradeLevels(candles, signal, oneMinuteMode = false) {
   }
 
   // Fallback: Window-based levels (should not reach here for 1-min with breakout patterns)
-  const window = candles.slice(-40);
+  const window = candles.slice(-numCandles);
   const windowHigh = Math.max(...window.map(c => c.h));
   const windowLow = Math.min(...window.map(c => c.l));
 
@@ -785,21 +786,21 @@ function calculateTradeCost(entry, lotSize) {
   };
 }
 
-function buildSignalRows(candles, oneMinuteMode = false, fiveMinuteCandles = [], threeMinuteCandles = []) {
+function buildSignalRows(candles, oneMinuteMode = false, fiveMinuteCandles = [], threeMinuteCandles = [], numCandles = TRADING_CONSTANTS.DEFAULT_CANDLES) {
   let activeTradeUntil = 0;
   return candles
     .map((_, index) => {
       if (index < 10) return null;
       if (candles[index].x <= activeTradeUntil) return null;
       if (!isBeforeThreePmIst(candles[index].x)) return null;
-      const window = candles.slice(0, index + 1).slice(-40);
-      const fiveMinuteWindow = fiveMinuteCandles.filter(candle => candle.x <= candles[index].x).slice(-40);
-      const threeMinuteWindow = threeMinuteCandles.filter(candle => candle.x <= candles[index].x).slice(-40);
-      const signal = calculateTradeSignal(window, oneMinuteMode, fiveMinuteWindow, threeMinuteWindow);
+      const window = candles.slice(0, index + 1).slice(-numCandles);
+      const fiveMinuteWindow = fiveMinuteCandles.filter(candle => candle.x <= candles[index].x).slice(-numCandles);
+      const threeMinuteWindow = threeMinuteCandles.filter(candle => candle.x <= candles[index].x).slice(-numCandles);
+      const signal = calculateTradeSignal(window, oneMinuteMode, fiveMinuteWindow, threeMinuteWindow, numCandles);
       if (signal.action === 'HOLD') return null;
 
       const signalCandle = candles[index];
-      const levels = calculateTradeLevels(window, signal, oneMinuteMode);
+      const levels = calculateTradeLevels(window, signal, oneMinuteMode, numCandles);
       const { entry, target, stopLoss } = levels;
 
       if (signal.action === 'BUY') {
@@ -967,6 +968,7 @@ function PCRAnalysis({ apiKey }) {
   const [fiveMinuteCandleData, setFiveMinuteCandleData] = useState([]);
   const [threeMinuteCandleData, setThreeMinuteCandleData] = useState([]);
   const [lockedSignalKeys, setLockedSignalKeys] = useState(new Set()); // Track signals that are locked (submitted/in progress)
+  const [numCandles, setNumCandles] = useState(TRADING_CONSTANTS.DEFAULT_CANDLES); // Configurable number of candles for pattern detection
   const candleChartRef = React.useRef(null);
   const chartSeriesRef = React.useRef(null);
   const ema10SeriesRef = React.useRef(null);
@@ -997,8 +999,9 @@ function PCRAnalysis({ apiKey }) {
       return false;
     }
     
-    // Market hours: 9:15 AM (9:15) to 3:40 PM (15:40)
-    const isOpen = (hours > 9 || (hours === 9 && minutes >= 15)) && (hours < 15 || (hours === 15 && minutes <= 40));
+    // Market hours: 9:15 AM to 3:40 PM IST
+    const isOpen = (hours > TRADING_CONSTANTS.MARKET_OPEN_HOUR || (hours === TRADING_CONSTANTS.MARKET_OPEN_HOUR && minutes >= TRADING_CONSTANTS.MARKET_OPEN_MINUTE)) 
+      && (hours < TRADING_CONSTANTS.MARKET_CLOSE_HOUR || (hours === TRADING_CONSTANTS.MARKET_CLOSE_HOUR && minutes <= TRADING_CONSTANTS.MARKET_CLOSE_MINUTE));
     return isOpen;
   };
 
@@ -1009,7 +1012,7 @@ function PCRAnalysis({ apiKey }) {
     };
     
     updateMarketStatus();
-    const marketCheckInterval = setInterval(updateMarketStatus, 30000); // Check every 30 seconds
+    const marketCheckInterval = setInterval(updateMarketStatus, TRADING_CONSTANTS.MARKET_CHECK_INTERVAL);
     
     return () => clearInterval(marketCheckInterval);
   }, []);
@@ -1276,10 +1279,10 @@ function PCRAnalysis({ apiKey }) {
 
         // Recalculate signals with updated candle data
         const oneMinuteMode = selectedInterval === 'minute';
-        const currentSignal = calculateTradeSignal(updatedCandleData, oneMinuteMode, fiveMinuteCandleData, threeMinuteCandleData);
+        const currentSignal = calculateTradeSignal(updatedCandleData, oneMinuteMode, fiveMinuteCandleData, threeMinuteCandleData, numCandles);
         setTradeSignal(currentSignal);
         setAutoTradePlan(calculateCurrentTradePlan(updatedCandleData, currentSignal));
-        const newSignalRows = buildSignalRows(updatedCandleData, oneMinuteMode, fiveMinuteCandleData, threeMinuteCandleData);
+        const newSignalRows = buildSignalRows(updatedCandleData, oneMinuteMode, fiveMinuteCandleData, threeMinuteCandleData, numCandles);
 
         // Preserve locked signals and only update non-locked ones
         let signalRowsWithCurrent = signalRows.map(signal => {
@@ -1293,7 +1296,7 @@ function PCRAnalysis({ apiKey }) {
           const currentSignalKey = `${currentSignal.action}-${Math.floor(lastCandle.x / 60000)}`;
 
           if (!lockedSignalKeys.has(currentSignalKey)) {
-            const levels = calculateTradeLevels(updatedCandleData.slice(-40), currentSignal, oneMinuteMode);
+            const levels = calculateTradeLevels(updatedCandleData.slice(-numCandles), currentSignal, oneMinuteMode, numCandles);
             const currentSignalRow = {
               ...currentSignal,
               time: lastCandle.x,
@@ -1598,17 +1601,17 @@ function PCRAnalysis({ apiKey }) {
           : latest || null
       );
 
-      const currentSignal = calculateTradeSignal(decisionCandleData, oneMinuteMode, fiveMinuteCandleData, threeMinuteCandleData);
+      const currentSignal = calculateTradeSignal(decisionCandleData, oneMinuteMode, fiveMinuteCandleData, threeMinuteCandleData, numCandles);
       setCandleData(candleData);
       setTradeSignal(currentSignal);
       setAutoTradePlan(calculateCurrentTradePlan(decisionCandleData, currentSignal));
-      const historicalRows = buildSignalRows(decisionCandleData, oneMinuteMode, fiveMinuteCandleData, threeMinuteCandleData);
+      const historicalRows = buildSignalRows(decisionCandleData, oneMinuteMode, fiveMinuteCandleData, threeMinuteCandleData, numCandles);
 
       // Add current live signal to the top of the table if it's not a HOLD
       let signalRowsWithCurrent = historicalRows;
       if (currentSignal.action !== 'HOLD') {
         const lastCandle = decisionCandleData[decisionCandleData.length - 1];
-        const levels = calculateTradeLevels(decisionCandleData.slice(-40), currentSignal, oneMinuteMode);
+        const levels = calculateTradeLevels(decisionCandleData.slice(-numCandles), currentSignal, oneMinuteMode, numCandles);
         const currentSignalRow = {
           ...currentSignal,
           time: lastCandle.x,
@@ -2084,6 +2087,18 @@ function PCRAnalysis({ apiKey }) {
                   <option key={option} value={option}>{option}</option>
                 ))}
               </select>
+            </label>
+
+            <label>
+              Candles for Pattern Detection
+              <input
+                type="number"
+                value={numCandles}
+                onChange={(event) => setNumCandles(Math.max(TRADING_CONSTANTS.MIN_CANDLES, parseInt(event.target.value) || TRADING_CONSTANTS.DEFAULT_CANDLES))}
+                min={TRADING_CONSTANTS.MIN_CANDLES}
+                max={TRADING_CONSTANTS.MAX_CANDLES}
+                title={`Number of past candles to use for detecting patterns (${TRADING_CONSTANTS.MIN_CANDLES}-${TRADING_CONSTANTS.MAX_CANDLES})`}
+              />
             </label>
           </div>
 
