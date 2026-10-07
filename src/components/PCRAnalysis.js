@@ -985,6 +985,7 @@ function PCRAnalysis({ apiKey }) {
   const [threeMinuteCandleData, setThreeMinuteCandleData] = useState([]);
   const [lockedSignalKeys, setLockedSignalKeys] = useState(new Set()); // Track signals that are locked (submitted/in progress)
   const [numCandles, setNumCandles] = useState(TRADING_CONSTANTS.DEFAULT_CANDLES); // Configurable number of candles for pattern detection
+  const [tickCounter, setTickCounter] = useState(0); // Incremented on every tick to trigger signal updates
   const candleChartRef = React.useRef(null);
   const chartSeriesRef = React.useRef(null);
   const ema10SeriesRef = React.useRef(null);
@@ -1060,15 +1061,10 @@ function PCRAnalysis({ apiKey }) {
 
   useEffect(() => {
     if (!selectedStrike || !selectedInterval) return;
+    // Load historical data once on strike/interval change
     fetchHistoricalChart(selectedStrike, selectedInterval);
-    fetchRealPCR(selectedStrike);
-
-    const refreshInterval = setInterval(() => {
-      fetchHistoricalChart(selectedStrike, selectedInterval);
-      fetchRealPCR(selectedStrike);
-    }, 5000000);
-
-    return () => clearInterval(refreshInterval);
+    // Note: Real-time signals now use live ticks only (no periodic refresh)
+    // This eliminates 15s+ latency and allows true real-time 1-minute trading
   }, [selectedStrike, selectedInterval]);
 
   useEffect(() => {
@@ -1152,14 +1148,13 @@ function PCRAnalysis({ apiKey }) {
         streamRef.current.close();
       }
     };
-  }, [selectedStrike]);
+  }, [selectedStrike, isMarketOpen]);
 
   useEffect(() => {
     if (!livePrice || !chartSeriesRef.current || candleData.length === 0) return;
 
     const getIntervalSeconds = (interval) => {
-      const map = { minute: 60, '3-minute': 180, '5-minute': 300, '15-minute': 900, hour: 3600, day: 86400 };
-      return map[interval] || 60;
+      return TRADING_CONSTANTS.TIMEFRAME_SECONDS[interval] || 60;
     };
 
     const getCandleBoundary = (timestamp, intervalSeconds) => {
@@ -1196,6 +1191,15 @@ function PCRAnalysis({ apiKey }) {
 
         chartSeriesRef.current.update(currentCandleDataRef.current);
         console.log(`[Chart] New candle created at ${new Date(currentCandleBoundary * 1000).toISOString()}: O=${livePrice.toFixed(2)}`);
+        
+        // Update candleData state to trigger signal recalculation
+        setCandleData(prevData => [...prevData, {
+          x: currentCandleBoundary * 1000,
+          o: livePrice,
+          h: livePrice,
+          l: livePrice,
+          c: livePrice,
+        }]);
       } else {
         // Same candle period - update current candle tracking
         const candleOpen = lastCandleOpenRef.current ?? lastCandleData.o;
@@ -1209,6 +1213,9 @@ function PCRAnalysis({ apiKey }) {
 
         chartSeriesRef.current.update(currentCandleDataRef.current);
         console.log(`[Chart] Updated candle: O=${currentCandleDataRef.current.open.toFixed(2)} H=${currentCandleDataRef.current.high.toFixed(2)} L=${currentCandleDataRef.current.low.toFixed(2)} C=${currentCandleDataRef.current.close.toFixed(2)}`);
+
+        // Increment tick counter to trigger signal recalculation on every tick
+        setTickCounter(prev => prev + 1);
 
         // Update EMAs with just the latest point (more efficient for Lightweight Charts)
         if (ema10SeriesRef.current || ema20SeriesRef.current) {
@@ -1255,13 +1262,14 @@ function PCRAnalysis({ apiKey }) {
     }
   }, [livePrice, candleData, selectedInterval]);
 
-  // Real-time signal updates based on live price ticks
+  // Real-time signal updates based on live price ticks only (no periodic refresh)
+  // Signals recalculate on every tick, providing true real-time 1-minute trading
+  // Note: 5-minute and 3-minute candles are empty (not fetched) - signals use 1-minute data only
   useEffect(() => {
     if (!livePrice || candleData.length === 0 || !selectedStrike || !selectedInterval) return;
 
     const getIntervalSeconds = (interval) => {
-      const map = { minute: 60, '3-minute': 180, '5-minute': 300, '15-minute': 900, hour: 3600, day: 86400 };
-      return map[interval] || 60;
+      return TRADING_CONSTANTS.TIMEFRAME_SECONDS[interval] || 60;
     };
 
     const getCandleBoundary = (timestamp, intervalSeconds) => {
@@ -1303,7 +1311,12 @@ function PCRAnalysis({ apiKey }) {
         // Preserve locked signals and only update non-locked ones
         let signalRowsWithCurrent = signalRows.map(signal => {
           const signalKey = `${signal.action}-${Math.floor(signal.time / 60000)}`; // Use action + minute as key
-          return lockedSignalKeys.has(signalKey) ? signal : newSignalRows.find(r => r.time === signal.time) || signal;
+          const newSignalData = newSignalRows.find(r => r.time === signal.time);
+          // Preserve outcome if already locked (True/False), otherwise update
+          if (signal.outcome === 'True' || signal.outcome === 'False') {
+            return signal; // Keep locked outcome
+          }
+          return lockedSignalKeys.has(signalKey) ? signal : newSignalData || signal;
         });
 
         // Add current live signal to the top of the table if it's not a HOLD and not already locked
@@ -1313,6 +1326,16 @@ function PCRAnalysis({ apiKey }) {
 
           if (!lockedSignalKeys.has(currentSignalKey)) {
             const levels = calculateTradeLevels(updatedCandleData.slice(-numCandles), currentSignal, oneMinuteMode, numCandles);
+            
+            // Check if this signal already exists in the table and preserve its outcome
+            const existingSignal = signalRowsWithCurrent.find(s => s.time === lastCandle.x && s.action === currentSignal.action);
+            const preservedOutcome = existingSignal?.outcome === 'True' || existingSignal?.outcome === 'False' 
+              ? existingSignal.outcome 
+              : 'Pending';
+            const preservedEvaluation = existingSignal?.outcome === 'True' || existingSignal?.outcome === 'False'
+              ? existingSignal.evaluation
+              : 'Pending outcome';
+            
             const currentSignalRow = {
               ...currentSignal,
               time: lastCandle.x,
@@ -1320,9 +1343,9 @@ function PCRAnalysis({ apiKey }) {
               target: levels.target,
               stopLoss: levels.stopLoss,
               levelSource: levels.levelSource,
-              outcome: 'Pending',
+              outcome: preservedOutcome,
               reason: `Live signal: ${currentSignal.reason}`,
-              evaluation: 'Pending outcome',
+              evaluation: preservedEvaluation,
             };
             // Add current signal at the beginning if it's not already there
             if (signalRowsWithCurrent.length === 0 || signalRowsWithCurrent[0].time !== lastCandle.x || signalRowsWithCurrent[0].action !== currentSignal.action) {
@@ -1404,7 +1427,7 @@ function PCRAnalysis({ apiKey }) {
     } catch (err) {
       console.error('[RealTimeSignals] Failed to update signals with live price:', err);
     }
-  }, [livePrice, candleData, selectedStrike, selectedInterval, fiveMinuteCandleData, threeMinuteCandleData]);
+  }, [livePrice, candleData, selectedStrike, selectedInterval, tickCounter]);
 
   // Periodically redraw full EMA data to ensure visibility and consistency
   useEffect(() => {
@@ -1454,10 +1477,7 @@ function PCRAnalysis({ apiKey }) {
   }, [strikeOptions, selectedInstrument, selectedExpiry, nifty50Data]);
 
   // Generate reverse signals from signal rows
-  useEffect(() => {
-    setReverseSignalRows(buildReverseSignalRows(signalRows));
-    setEmaStrategyRows(buildEmaStrategyRows(signalRows, { ema20: ema20Data.at(-1)?.value || 0 }));
-  }, [signalRows, ema20Data]);
+  // Note: Already handled in the main real-time signals useEffect - removed to prevent infinite loop
 
   const fetchRealPCR = async (strike) => {
     if (!strike?.instrumentToken) return;
