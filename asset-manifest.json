@@ -1,0 +1,13 @@
+{
+  "files": {
+    "main.css": "/builderapp/static/css/main.08739bbc.css",
+    "main.js": "/builderapp/static/js/main.e3fc1f14.js",
+    "index.html": "/builderapp/index.html",
+    "main.08739bbc.css.map": "/builderapp/static/css/main.08739bbc.css.map",
+    "main.e3fc1f14.js.map": "/builderapp/static/js/main.e3fc1f14.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.08739bbc.css",
+    "static/js/main.e3fc1f14.js"
+  ]
+}
