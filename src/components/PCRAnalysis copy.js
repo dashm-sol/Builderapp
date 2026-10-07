@@ -1853,10 +1853,11 @@ function PCRAnalysis({ apiKey }) {
     .reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
 
   // Reverse signals filtering and calculations
+  // Note: Reverse signals have opposite actions (BUY <-> SELL), so we don't filter by action
+  // Instead, show ALL reverse signals regardless of the BUY/SELL filter
   const filteredReverseSignalRows = reverseSignalRows.filter(signal => {
-    const actionMatch = signalFilter === 'ALL' || signal.action === signalFilter;
-    if (!actionMatch) return false;
-
+    // Don't filter by action for reverse signals - they're inverse of originals
+    // Show all reverse signals or filter by day only
     if (dayFilter === 'ALL') return true;
     const signalDate = new Date(signal.time).toLocaleDateString('en-IN', { year: 'numeric', month: '2-digit', day: '2-digit' });
     return signalDate === dayFilter;
