@@ -1308,21 +1308,29 @@ function PCRAnalysis({ apiKey }) {
         setAutoTradePlan(calculateCurrentTradePlan(updatedCandleData, currentSignal));
         const newSignalRows = buildSignalRows(updatedCandleData, oneMinuteMode, fiveMinuteCandleData, threeMinuteCandleData, numCandles);
 
-        // Preserve locked signals and only update non-locked ones
+        // Preserve locked signals and merge old and new signals
         let signalRowsWithCurrent = signalRows.map(signal => {
-          const signalKey = `${signal.action}-${Math.floor(signal.time / 60000)}`; // Use action + minute as key
-          const newSignalData = newSignalRows.find(r => r.time === signal.time);
-          // Preserve outcome if already locked (True/False), otherwise update
+          const signalKey = getSignalKey(signal);
+          const newSignalData = newSignalRows.find(r => r.time === signal.time && r.action === signal.action);
+          // Preserve outcome if already locked (True/False), otherwise update with new data
           if (signal.outcome === 'True' || signal.outcome === 'False') {
             return signal; // Keep locked outcome
           }
           return lockedSignalKeys.has(signalKey) ? signal : newSignalData || signal;
         });
+        
+        // Add NEW signals from buildSignalRows that weren't in the old list
+        for (const newSignal of newSignalRows) {
+          const exists = signalRowsWithCurrent.some(s => s.time === newSignal.time && s.action === newSignal.action);
+          if (!exists) {
+            signalRowsWithCurrent.unshift(newSignal);
+          }
+        }
 
         // Add current live signal to the top of the table if it's not a HOLD and not already locked
         if (currentSignal.action !== 'HOLD') {
           const lastCandle = updatedCandleData[updatedCandleData.length - 1];
-          const currentSignalKey = `${currentSignal.action}-${Math.floor(lastCandle.x / 60000)}`;
+          const currentSignalKey = getSignalKey({ time: lastCandle.x, action: currentSignal.action });
 
           if (!lockedSignalKeys.has(currentSignalKey)) {
             const levels = calculateTradeLevels(updatedCandleData.slice(-numCandles), currentSignal, oneMinuteMode, numCandles);
@@ -1354,30 +1362,37 @@ function PCRAnalysis({ apiKey }) {
           }
         }
 
-        // Monitor pending signals for target/stop loss hits
+        // Monitor pending signals for target/stop loss hits (using candle high/low for gap handling)
         const monitoredSignalRows = signalRowsWithCurrent.map(signal => {
           if (signal.outcome === 'Pending' && signal.entry && signal.target && signal.stopLoss) {
             let updatedSignal = { ...signal };
             let outcomeChanged = false;
             
+            // Get the current candle high/low (more accurate than single tick for gap scenarios)
+            const lastCandle = updatedCandleData[updatedCandleData.length - 1];
+            const candleHigh = lastCandle.h;
+            const candleLow = lastCandle.l;
+            
             if (signal.action === 'BUY') {
-              if (livePrice >= signal.target) {
+              // BUY: Target = candle HIGH reaches target, SL = candle LOW hits stop
+              if (candleHigh >= signal.target) {
                 updatedSignal.outcome = 'True';
-                updatedSignal.evaluation = `Target ₹${signal.target.toFixed(2)} hit at ₹${livePrice.toFixed(2)}`;
+                updatedSignal.evaluation = `Target ₹${signal.target.toFixed(2)} hit at high ₹${candleHigh.toFixed(2)}`;
                 outcomeChanged = true;
-              } else if (livePrice <= signal.stopLoss) {
+              } else if (candleLow <= signal.stopLoss) {
                 updatedSignal.outcome = 'False';
-                updatedSignal.evaluation = `Stop loss ₹${signal.stopLoss.toFixed(2)} hit at ₹${livePrice.toFixed(2)}`;
+                updatedSignal.evaluation = `Stop loss ₹${signal.stopLoss.toFixed(2)} hit at low ₹${candleLow.toFixed(2)}`;
                 outcomeChanged = true;
               }
             } else if (signal.action === 'SELL') {
-              if (livePrice <= signal.target) {
+              // SELL: Target = candle LOW reaches target, SL = candle HIGH hits stop
+              if (candleLow <= signal.target) {
                 updatedSignal.outcome = 'True';
-                updatedSignal.evaluation = `Target ₹${signal.target.toFixed(2)} hit at ₹${livePrice.toFixed(2)}`;
+                updatedSignal.evaluation = `Target ₹${signal.target.toFixed(2)} hit at low ₹${candleLow.toFixed(2)}`;
                 outcomeChanged = true;
-              } else if (livePrice >= signal.stopLoss) {
+              } else if (candleHigh >= signal.stopLoss) {
                 updatedSignal.outcome = 'False';
-                updatedSignal.evaluation = `Stop loss ₹${signal.stopLoss.toFixed(2)} hit at ₹${livePrice.toFixed(2)}`;
+                updatedSignal.evaluation = `Stop loss ₹${signal.stopLoss.toFixed(2)} hit at high ₹${candleHigh.toFixed(2)}`;
                 outcomeChanged = true;
               }
             }
@@ -2197,6 +2212,7 @@ function PCRAnalysis({ apiKey }) {
 
           {latestCandle && (
             <div className="ohlc-summary">
+              <div className="ohlc-box"><span>Time (IST)</span><strong>{latestCandle.time ? new Date(latestCandle.time).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: true }) : 'N/A'}</strong></div>
               <div className="ohlc-box"><span>Open</span><strong>₹{Number(latestCandle.open || 0).toFixed(2)}</strong></div>
               <div className="ohlc-box"><span>High</span><strong>₹{Number(latestCandle.high || 0).toFixed(2)}</strong></div>
               <div className="ohlc-box"><span>Low</span><strong>₹{Number(latestCandle.low || 0).toFixed(2)}</strong></div>
