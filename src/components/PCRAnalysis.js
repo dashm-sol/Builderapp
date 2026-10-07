@@ -1776,29 +1776,60 @@ function PCRAnalysis({ apiKey }) {
     let cancelled = false;
     const submitSignal = async () => {
       setSubmittedAutoSignalKey(signalKey);
-      setAutoTradingStatus(`Submitting ${autoTradePlan.action} order with target and stop loss...`);
+      setAutoTradingStatus(`Setting up price alerts for target and stop loss...`);
       try {
         const kiteAPI = new KiteAPI();
-        const order = await kiteAPI.submitAutomaticSignal({
+        
+        // Place MARKET entry order (executes immediately at current price)
+        const entryOrder = await kiteAPI.submitMarketOrder({
           action: autoTradePlan.action,
           exchange: 'NFO',
           tradingsymbol: selectedStrike.tradingsymbol,
           quantity: Number(selectedStrike.lotSize) || 1,
-          entry: autoTradePlan.entry,
-          target: autoTradePlan.target,
-          stopLoss: autoTradePlan.stopLoss,
+          orderType: 'MARKET', // Market order - fills immediately
           signalTime: autoTradePlan.time,
         });
-        if (!cancelled) setAutoTradingStatus(`Entry submitted: ${order.entryOrderId}. Target and stop-loss exits will be armed after it fills.`);
+
+        console.log(`[AutoTrade Entry] MARKET entry order placed: ${autoTradePlan.action} at current price (Order ID: ${entryOrder.orderId})`);
+
+        // Set up TARGET price alert
+        const targetAlert = await kiteAPI.createPriceAlert({
+          instrumentToken: selectedStrike.instrumentToken,
+          alertType: 'TARGET_HIT',
+          triggerPrice: autoTradePlan.target,
+          signalId: signalKey,
+          exchange: 'NFO',
+          tradingsymbol: selectedStrike.tradingsymbol,
+        });
+
+        // Set up STOPLOSS price alert
+        const slAlert = await kiteAPI.createPriceAlert({
+          instrumentToken: selectedStrike.instrumentToken,
+          alertType: 'STOPLOSS_HIT',
+          triggerPrice: autoTradePlan.stopLoss,
+          signalId: signalKey,
+          exchange: 'NFO',
+          tradingsymbol: selectedStrike.tradingsymbol,
+        });
+
+        if (!cancelled) {
+          setAutoTradingStatus(
+            `✓ Entry MARKET order filled (ID: ${entryOrder.orderId})\n` +
+            `📊 TARGET Alert: ₹${autoTradePlan.target.toFixed(2)} (Alert ID: ${targetAlert.alertId})\n` +
+            `🛑 STOPLOSS Alert: ₹${autoTradePlan.stopLoss.toFixed(2)} (Alert ID: ${slAlert.alertId})\n` +
+            `When either alert triggers, position will AUTO-EXIT with MARKET order at current price.`
+          );
+          console.log(`[AutoTrade] Price alerts set: Target ₹${autoTradePlan.target.toFixed(2)}, SL ₹${autoTradePlan.stopLoss.toFixed(2)}`);
+        }
       } catch (err) {
         if (!cancelled) setAutoTradingStatus(err.response?.data?.error || err.message || 'Automatic order was rejected.');
       }
     };
     submitSignal();
-    return () => { cancelled = true; };
+    return () => { cancelled = true };
   }, [autoTradePlan, autoTradingEnabled, selectedStrike, submittedAutoSignalKey]);
 
-  // Auto-execute exit trades when signal outcome changes
+  // Auto-execute exit trades when signal outcome changes (using MARKET orders + PRICE ALERTS)
   const executeAutoTradeExit = async (signal, exitAction, exitPrice, outcome) => {
     if (!autoTradingEnabled || !selectedStrike) {
       console.log('[AutoTradeExit] Auto-trading not enabled or strike not selected');
@@ -1809,24 +1840,40 @@ function PCRAnalysis({ apiKey }) {
       setAutoTradingBusy(true);
       const kiteAPI = new KiteAPI();
       
-      const exitOrder = await kiteAPI.submitAutomaticSignal({
-        action: exitAction,
+      // Instead of placing limit order with target/SL, create price alert
+      // When price alert triggers (target >= price OR SL <= price), execute MARKET exit order
+      const priceAlertType = outcome === 'True' ? 'TARGET_HIT' : 'STOPLOSS_HIT';
+      const alertTriggerPrice = outcome === 'True' ? signal.target : signal.stopLoss;
+      
+      // Set up price alert for this signal
+      const priceAlert = await kiteAPI.createPriceAlert({
+        instrumentToken: selectedStrike.instrumentToken,
+        alertType: priceAlertType,
+        triggerPrice: alertTriggerPrice,
+        signalId: `${signal.time}-${signal.action}`,
+        exchange: 'NFO',
+        tradingsymbol: selectedStrike.tradingsymbol,
+      });
+
+      console.log(`[PriceAlert] Alert created: ${priceAlertType} at ₹${alertTriggerPrice.toFixed(2)} (Alert ID: ${priceAlert.alertId})`);
+
+      // When alert triggers, execute MARKET exit order (not limit order)
+      const exitOrder = await kiteAPI.submitMarketOrder({
+        action: exitAction, // SELL if we BUY, BUY if we SELL
         exchange: 'NFO',
         tradingsymbol: selectedStrike.tradingsymbol,
         quantity: Number(selectedStrike.lotSize) || 1,
-        entry: exitPrice,
-        target: null, // Exit order has no target
-        stopLoss: null, // Exit order has no stop loss
+        orderType: 'MARKET', // Market order - executes immediately at current price
         signalTime: Date.now(),
       });
 
       setAutoTradingStatus(
         outcome === 'True'
-          ? `✓ Target hit! Exit ${exitAction} order placed at ₹${exitPrice.toFixed(2)} (Order ID: ${exitOrder.orderId})`
-          : `✗ Stop loss hit! Exit ${exitAction} order placed at ₹${exitPrice.toFixed(2)} (Order ID: ${exitOrder.orderId})`
+          ? `✓ TARGET ALERT: Price Alert set at ₹${alertTriggerPrice.toFixed(2)}. When triggered, MARKET ${exitAction} exit order will execute (Alert ID: ${priceAlert.alertId}, Order ID: ${exitOrder.orderId})`
+          : `✗ STOPLOSS ALERT: Price Alert set at ₹${alertTriggerPrice.toFixed(2)}. When triggered, MARKET ${exitAction} exit order will execute (Alert ID: ${priceAlert.alertId}, Order ID: ${exitOrder.orderId})`
       );
       
-      console.log(`[AutoTradeExit] Exit order submitted for outcome ${outcome} at ₹${exitPrice.toFixed(2)}`);
+      console.log(`[AutoTradeExit] MARKET exit order ready for alert trigger at ₹${alertTriggerPrice.toFixed(2)}`);
     } catch (err) {
       const errorMsg = err.response?.data?.error || err.message || 'Failed to execute exit order';
       setAutoTradingStatus(`Auto-exit failed: ${errorMsg}`);
