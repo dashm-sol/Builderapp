@@ -909,10 +909,26 @@ function buildEmaStrategyRows(signalRows, emaData) {
     
     // EMA Strategy usually loses money (inverted outcome)
     let emaOutcome = 'Pending';
+    let emaEvaluation = signal.evaluation; // Start with original evaluation
+    
     if (signal.outcome === 'True') {
-      emaOutcome = 'False'; // Original won, EMA loses
+      emaOutcome = 'False'; // Original won, EMA loses (hits stop loss which is at original target)
+      // Adapt evaluation: when original hit target, EMA hit stop loss at that same price
+      if (signal.evaluation.includes('reached target')) {
+        const originalPrice = signal.target;
+        emaEvaluation = signal.evaluation
+          .replace('reached target', `hit stop ₹${emaStopLoss.toFixed(2)}`)
+          .replace(/high|low/, emaAction === 'SELL' ? 'low' : 'high');
+      }
     } else if (signal.outcome === 'False') {
-      emaOutcome = 'True';  // Original lost, EMA wins (rare)
+      emaOutcome = 'True';  // Original lost, EMA wins (rare) (hits target which is at original stop loss)
+      // Adapt evaluation: when original hit stop loss, EMA hit target at that same price
+      if (signal.evaluation.includes('hit stop')) {
+        const originalPrice = signal.stopLoss;
+        emaEvaluation = signal.evaluation
+          .replace(/hit stop.*/, `reached target ₹${emaTarget.toFixed(2)}`)
+          .replace(/high|low/, emaAction === 'SELL' ? 'low' : 'high');
+      }
     }
 
     return {
@@ -924,7 +940,7 @@ function buildEmaStrategyRows(signalRows, emaData) {
       outcome: emaOutcome,
       reason: `EMA Contrarian: Against ${signal.reason}`,
       isEmaStrategy: true,
-      evaluation: emaOutcome === 'Pending' ? 'Pending outcome' : emaOutcome === 'True' ? 'Profit (Rare)' : 'Loss (Expected)',
+      evaluation: emaEvaluation,
     };
   });
 }
@@ -1886,6 +1902,26 @@ function PCRAnalysis({ apiKey }) {
     .filter(signal => signal.outcome === 'Pending')
     .reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
 
+  // Current P/L calculations (based on current price from chart data, not target/stop loss)
+  const currentPLSignals = filteredSignalRows.map(signal => {
+    const signalCandle = candleData.find(candle => candle.x === signal.time);
+    const priceAtSignalTime = signalCandle?.c || signal.entry;
+    const currentPLPoints = signal.action === 'BUY' 
+      ? priceAtSignalTime - signal.entry 
+      : signal.entry - priceAtSignalTime;
+    return { ...signal, currentPLPoints, priceAtSignalTime };
+  });
+
+  const currentPLRealizedInvestment = filteredSignalRows.reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
+  const currentPLRealizedAmount = currentPLSignals.reduce((total, signal) => {
+    const currentPL = signal.currentPLPoints * lotSize;
+    return total + currentPL;
+  }, 0);
+  const currentPLRealizedProfitLoss = currentPLRealizedAmount - (filteredSignalRows.reduce((total, signal) => total + tradeCostForSignal(signal).totalCharges, 0));
+  const currentPLPendingInvestment = filteredSignalRows
+    .filter(signal => signal.outcome === 'Pending')
+    .reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
+
   // Reverse signals filtering and calculations
   const filteredReverseSignalRows = reverseSignalRows.filter(signal => {
     const actionMatch = signalFilter === 'ALL' || signal.action === signalFilter;
@@ -1923,6 +1959,23 @@ function PCRAnalysis({ apiKey }) {
     .filter(signal => signal.outcome === 'Pending')
     .reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
 
+  // Current P/L calculations for Reverse signals
+  const reverseCurrentPLSignals = filteredReverseSignalRows.map(signal => {
+    const signalCandle = candleData.find(candle => candle.x === signal.time);
+    const priceAtSignalTime = signalCandle?.c || signal.entry;
+    const currentPLPoints = signal.action === 'SELL' 
+      ? signal.entry - priceAtSignalTime 
+      : priceAtSignalTime - signal.entry;
+    return { ...signal, currentPLPoints, priceAtSignalTime };
+  });
+
+  const reverseCurrentPLRealizedInvestment = filteredReverseSignalRows.reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
+  const reverseCurrentPLRealizedAmount = reverseCurrentPLSignals.reduce((total, signal) => {
+    const currentPL = signal.currentPLPoints * lotSize;
+    return total + currentPL;
+  }, 0);
+  const reverseCurrentPLRealizedProfitLoss = reverseCurrentPLRealizedAmount - (filteredReverseSignalRows.reduce((total, signal) => total + tradeCostForSignal(signal).totalCharges, 0));
+
   // EMA Strategy signals filtering and calculations
   const filteredEmaStrategyRows = emaStrategyRows.filter(signal => {
     const actionMatch = signalFilter === 'ALL' || signal.action === signalFilter;
@@ -1959,6 +2012,23 @@ function PCRAnalysis({ apiKey }) {
   const emaPendingInvestment = filteredEmaStrategyRows
     .filter(signal => signal.outcome === 'Pending')
     .reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
+
+  // Current P/L calculations for EMA Strategy signals
+  const emaCurrentPLSignals = filteredEmaStrategyRows.map(signal => {
+    const signalCandle = candleData.find(candle => candle.x === signal.time);
+    const priceAtSignalTime = signalCandle?.c || signal.entry;
+    const currentPLPoints = signal.action === 'BUY' 
+      ? priceAtSignalTime - signal.entry 
+      : signal.entry - priceAtSignalTime;
+    return { ...signal, currentPLPoints, priceAtSignalTime };
+  });
+
+  const emaCurrentPLRealizedInvestment = filteredEmaStrategyRows.reduce((total, signal) => total + tradeCostForSignal(signal).totalCashRequired, 0);
+  const emaCurrentPLRealizedAmount = emaCurrentPLSignals.reduce((total, signal) => {
+    const currentPL = signal.currentPLPoints * lotSize;
+    return total + currentPL;
+  }, 0);
+  const emaCurrentPLRealizedProfitLoss = emaCurrentPLRealizedAmount - (filteredEmaStrategyRows.reduce((total, signal) => total + tradeCostForSignal(signal).totalCharges, 0));
 
   const downloadSignalsJson = () => {
     const exportData = {
@@ -2244,7 +2314,12 @@ function PCRAnalysis({ apiKey }) {
                 <span>{filteredSignalRows.length} decisions | Overall success: {overallSuccess.toFixed(1)}%</span>
                 {latestTradeCost && <span>Latest one-trade cost: ₹{latestTradeCost.totalCashRequired.toFixed(2)} (Premium ₹{latestTradeCost.notional.toFixed(2)} + charges ₹{latestTradeCost.totalCharges.toFixed(2)})</span>}
                 <span>Win amount: {winAmountPercent.toFixed(1)}% | Completed investment: ₹{realizedInvestment.toFixed(2)}</span>
-                <span>Gross P/L: <b className={realizedProfitLoss >= 0 ? 'profit' : 'loss'}>{realizedProfitLoss >= 0 ? '+' : ''}₹{realizedProfitLoss.toFixed(2)}</b> | Pending investment: ₹{pendingInvestment.toFixed(2)} | Lot size: {lotSize}</span>
+                <span><b>📈 ORIGINAL P/L:</b> Gross P/L: <b className={realizedProfitLoss >= 0 ? 'profit' : 'loss'}>{realizedProfitLoss >= 0 ? '+' : ''}₹{realizedProfitLoss.toFixed(2)}</b> | Pending investment: ₹{pendingInvestment.toFixed(2)} | Lot size: {lotSize}</span>
+                <span><b>💹 CURRENT P/L:</b> Gross P/L: <b className={currentPLRealizedProfitLoss >= 0 ? 'profit' : 'loss'}>{currentPLRealizedProfitLoss >= 0 ? '+' : ''}₹{currentPLRealizedProfitLoss.toFixed(2)}</b> | Investment: ₹{currentPLRealizedInvestment.toFixed(2)}</span>
+                <hr style={{ margin: '8px 0' }} />
+                <span style={{ fontSize: '12px', color: '#94a3b8' }}>
+                  <b>📊 Column Info:</b> "Profit/Loss Points" = Original (Entry → Target/Stop Loss) | "Current P/L Points" = Current (Entry → Current Price)
+                </span>
               </div>
             </div>
             {strategyReview.length > 0 && (
@@ -2263,6 +2338,7 @@ function PCRAnalysis({ apiKey }) {
                       <th>Time</th>
                       <th>Action</th>
                       <th>Buy/Sell Price</th>
+                      <th>Current Price</th>
                       <th>Trade Cost</th>
                       <th>Candlestick</th>
                       <th>Chart pattern</th>
@@ -2275,6 +2351,7 @@ function PCRAnalysis({ apiKey }) {
                       <th>Stop loss</th>
                       <th>Exit Price</th>
                       <th>Profit/Loss Points</th>
+                      <th>Current P/L Points</th>
                       <th>Success</th>
                       <th>Evaluation</th>
                       <th>Reason</th>
@@ -2284,11 +2361,19 @@ function PCRAnalysis({ apiKey }) {
                     {filteredSignalRows.map((signal, index) => {
                       const parts = signal.pattern.split(' | ');
                       const tradeCost = tradeCostForSignal(signal);
+                      // Find candle at signal time to get price at that moment
+                      const signalCandle = candleData.find(candle => candle.x === signal.time);
+                      const priceAtSignalTime = signalCandle?.c || signal.entry;
+                      // Calculate P/L from entry to current price
+                      const currentPLPoints = signal.action === 'BUY' 
+                        ? priceAtSignalTime - signal.entry 
+                        : signal.entry - priceAtSignalTime;
                       return (
                         <tr key={`${signal.time}-${index}`}>
                           <td>{new Date(signal.time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
                           <td><span className={`signal-pill ${signal.action.toLowerCase()}`}>{signal.action}</span></td>
                           <td>₹{Number(signal.entry).toFixed(2)}</td>
+                          <td className={priceAtSignalTime > signal.entry ? 'up' : priceAtSignalTime < signal.entry ? 'down' : ''}>₹{Number(priceAtSignalTime).toFixed(2)}</td>
                           <td>₹{tradeCost.totalCashRequired.toFixed(2)}<small>Premium ₹{tradeCost.notional.toFixed(2)} + fees ₹{tradeCost.totalCharges.toFixed(2)}</small></td>
                           <td>{parts[0].replace('Liquidity sweep + ', '').replace('Institutional ', '')}</td>
                           <td>{parts[1] || 'Confirmed structure'}</td>
@@ -2301,6 +2386,7 @@ function PCRAnalysis({ apiKey }) {
                           <td>₹{Number(signal.stopLoss).toFixed(2)}{signal.levelSource && <small>{signal.levelSource}</small>}</td>
                           <td>₹{Number(signal.outcome === 'True' ? signal.target : signal.outcome === 'False' ? signal.stopLoss : signal.entry).toFixed(2)}</td>
                           <td className={signal.outcome === 'Pending' ? '' : signal.outcome === 'True' ? 'profit' : 'loss'}>{(signal.action === 'BUY' ? (signal.outcome === 'True' ? signal.target - signal.entry : signal.outcome === 'False' ? signal.stopLoss - signal.entry : 0) : (signal.outcome === 'True' ? signal.entry - signal.target : signal.outcome === 'False' ? signal.entry - signal.stopLoss : 0)).toFixed(2)} pts</td>
+                          <td className={currentPLPoints > 0 ? 'profit' : currentPLPoints < 0 ? 'loss' : ''}>{currentPLPoints.toFixed(2)} pts</td>
                           <td><span className={`outcome-pill ${signal.outcome.toLowerCase()}`}>{signal.outcome}</span></td>
                           <td>{signal.evaluation}</td>
                           <td>{signal.reason}</td>
@@ -2339,7 +2425,12 @@ function PCRAnalysis({ apiKey }) {
                 <span>{filteredReverseSignalRows.length} reverse decisions | Reverse success: {reverseOverallSuccess.toFixed(1)}%</span>
                 {latestReverseSignalTradeCost && <span>Latest reverse trade cost: ₹{latestReverseSignalTradeCost.totalCashRequired.toFixed(2)} (Premium ₹{latestReverseSignalTradeCost.notional.toFixed(2)} + charges ₹{latestReverseSignalTradeCost.totalCharges.toFixed(2)})</span>}
                 <span>Reverse win amount: {reverseWinAmountPercent.toFixed(1)}% | Reverse investment: ₹{reverseRealizedInvestment.toFixed(2)}</span>
-                <span>Reverse Gross P/L: <b className={reverseRealizedProfitLoss >= 0 ? 'profit' : 'loss'}>{reverseRealizedProfitLoss >= 0 ? '+' : ''}₹{reverseRealizedProfitLoss.toFixed(2)}</b> | Reverse pending: ₹{reversePendingInvestment.toFixed(2)} | Lot size: {lotSize}</span>
+                <span><b>📈 ORIGINAL P/L:</b> Reverse Gross P/L: <b className={reverseRealizedProfitLoss >= 0 ? 'profit' : 'loss'}>{reverseRealizedProfitLoss >= 0 ? '+' : ''}₹{reverseRealizedProfitLoss.toFixed(2)}</b> | Reverse pending: ₹{reversePendingInvestment.toFixed(2)} | Lot size: {lotSize}</span>
+                <span><b>💹 CURRENT P/L:</b> Reverse Gross P/L: <b className={reverseCurrentPLRealizedProfitLoss >= 0 ? 'profit' : 'loss'}>{reverseCurrentPLRealizedProfitLoss >= 0 ? '+' : ''}₹{reverseCurrentPLRealizedProfitLoss.toFixed(2)}</b> | Investment: ₹{reverseCurrentPLRealizedInvestment.toFixed(2)}</span>
+                <hr style={{ margin: '8px 0' }} />
+                <span style={{ fontSize: '12px', color: '#94a3b8' }}>
+                  <b>📊 Column Info:</b> "Profit/Loss Points" = Original (Entry → Target/Stop Loss) | "Current P/L Points" = Current (Entry → Current Price)
+                </span>
               </div>
             </div>
             {filteredReverseSignalRows.length === 0 ? (
@@ -2352,6 +2443,7 @@ function PCRAnalysis({ apiKey }) {
                       <th>Time</th>
                       <th>Reverse Action</th>
                       <th>Entry Price</th>
+                      <th>Current Price</th>
                       <th>Trade Cost</th>
                       <th>Candlestick</th>
                       <th>Chart pattern</th>
@@ -2364,6 +2456,7 @@ function PCRAnalysis({ apiKey }) {
                       <th>Stop loss (Original Target)</th>
                       <th>Exit Price</th>
                       <th>Profit/Loss Points</th>
+                      <th>Current P/L Points</th>
                       <th>Result</th>
                       <th>Evaluation</th>
                       <th>Reason</th>
@@ -2373,11 +2466,19 @@ function PCRAnalysis({ apiKey }) {
                     {filteredReverseSignalRows.map((signal, index) => {
                       const parts = signal.pattern.split(' | ');
                       const tradeCost = tradeCostForSignal(signal);
+                      // Find candle at signal time to get price at that moment
+                      const signalCandle = candleData.find(candle => candle.x === signal.time);
+                      const priceAtSignalTime = signalCandle?.c || signal.entry;
+                      // Calculate P/L from entry to current price (for reverse signals)
+                      const currentPLPoints = signal.action === 'SELL' 
+                        ? signal.entry - priceAtSignalTime 
+                        : priceAtSignalTime - signal.entry;
                       return (
                         <tr key={`reverse-${signal.time}-${index}`}>
                           <td>{new Date(signal.time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
                           <td><span className={`signal-pill ${signal.action.toLowerCase()}`}>{signal.action}</span></td>
                           <td>₹{Number(signal.entry).toFixed(2)}</td>
+                          <td className={priceAtSignalTime > signal.entry ? 'up' : priceAtSignalTime < signal.entry ? 'down' : ''}>₹{Number(priceAtSignalTime).toFixed(2)}</td>
                           <td>₹{tradeCost.totalCashRequired.toFixed(2)}<small>Premium ₹{tradeCost.notional.toFixed(2)} + fees ₹{tradeCost.totalCharges.toFixed(2)}</small></td>
                           <td>{parts[0].replace('Liquidity sweep + ', '').replace('Institutional ', '')}</td>
                           <td>{parts[1] || 'Confirmed structure'}</td>
@@ -2390,6 +2491,7 @@ function PCRAnalysis({ apiKey }) {
                           <td>₹{Number(signal.stopLoss).toFixed(2)}<small>Hit when original target hit</small></td>
                           <td>₹{Number(signal.outcome === 'True' ? signal.target : signal.outcome === 'False' ? signal.stopLoss : signal.entry).toFixed(2)}</td>
                           <td className={signal.outcome === 'Pending' ? '' : signal.outcome === 'True' ? 'profit' : 'loss'}>{(signal.action === 'SELL' ? (signal.outcome === 'True' ? signal.entry - signal.target : signal.outcome === 'False' ? signal.entry - signal.stopLoss : 0) : (signal.outcome === 'True' ? signal.target - signal.entry : signal.outcome === 'False' ? signal.stopLoss - signal.entry : 0)).toFixed(2)} pts</td>
+                          <td className={currentPLPoints > 0 ? 'profit' : currentPLPoints < 0 ? 'loss' : ''}>{currentPLPoints.toFixed(2)} pts</td>
                           <td><span className={`outcome-pill ${signal.outcome.toLowerCase()}`}>{signal.outcome}</span></td>
                           <td>{signal.evaluation}</td>
                           <td>{signal.reason}</td>
@@ -2408,9 +2510,14 @@ function PCRAnalysis({ apiKey }) {
               <h3>📉 EMA Strategy (Loss-Making)</h3>
               <div className="signal-summary">
                 <span>Overall Success: <b style={{ color: emaOverallSuccess > 50 ? '#22c55e' : '#ef4444' }}>{emaOverallSuccess.toFixed(2)}%</b> ({successfulEmaSignals.length}/{evaluatedEmaSignals.length})</span>
-                <span>Realized P/L: <b style={{ color: emaRealizedProfitLoss >= 0 ? '#22c55e' : '#ef4444' }}>₹{emaRealizedProfitLoss.toFixed(2)}</b> | Invested: ₹{emaRealizedInvestment.toFixed(2)}</span>
+                <span><b>📈 ORIGINAL P/L:</b> Realized P/L: <b style={{ color: emaRealizedProfitLoss >= 0 ? '#22c55e' : '#ef4444' }}>₹{emaRealizedProfitLoss.toFixed(2)}</b> | Invested: ₹{emaRealizedInvestment.toFixed(2)}</span>
+                <span><b>💹 CURRENT P/L:</b> Realized P/L: <b style={{ color: emaCurrentPLRealizedProfitLoss >= 0 ? '#22c55e' : '#ef4444' }}>₹{emaCurrentPLRealizedProfitLoss.toFixed(2)}</b> | Invested: ₹{emaCurrentPLRealizedInvestment.toFixed(2)}</span>
                 <span>Pending Investment: <b style={{ color: '#f59e0b' }}>₹{emaPendingInvestment.toFixed(2)}</b> ({filteredEmaStrategyRows.filter(s => s.outcome === 'Pending').length} signals)</span>
                 <span>Win/Loss Ratio: <b style={{ color: emaWinAmountPercent > 50 ? '#22c55e' : '#ef4444' }}>{emaWinAmountPercent.toFixed(2)}%</b> | W: ₹{emaWinAmount.toFixed(2)} / L: ₹{emaLossAmount.toFixed(2)}</span>
+                <hr style={{ margin: '8px 0' }} />
+                <span style={{ fontSize: '12px', color: '#94a3b8' }}>
+                  <b>📊 Column Info:</b> "Profit/Loss Points" = Original (Entry → Target/Stop Loss) | "Current P/L Points" = Current (Entry → Current Price)
+                </span>
               </div>
             </div>
 
@@ -2424,6 +2531,7 @@ function PCRAnalysis({ apiKey }) {
                       <th>Signal Time</th>
                       <th>Buy/Sell</th>
                       <th>Buy/Sell Price</th>
+                      <th>Current Price</th>
                       <th>Trade Cost</th>
                       <th>Candlestick</th>
                       <th>Chart pattern</th>
@@ -2436,6 +2544,7 @@ function PCRAnalysis({ apiKey }) {
                       <th>Stop loss</th>
                       <th>Exit Price</th>
                       <th>Profit/Loss Points</th>
+                      <th>Current P/L Points</th>
                       <th>Result</th>
                       <th>Evaluation</th>
                       <th>Reason</th>
@@ -2445,11 +2554,19 @@ function PCRAnalysis({ apiKey }) {
                     {filteredEmaStrategyRows.map((signal, index) => {
                       const parts = signal.pattern.split(' | ');
                       const tradeCost = tradeCostForSignal(signal);
+                      // Find candle at signal time to get price at that moment
+                      const signalCandle = candleData.find(candle => candle.x === signal.time);
+                      const priceAtSignalTime = signalCandle?.c || signal.entry;
+                      // Calculate P/L from entry to current price (for EMA signals)
+                      const currentPLPoints = signal.action === 'BUY' 
+                        ? priceAtSignalTime - signal.entry 
+                        : signal.entry - priceAtSignalTime;
                       return (
                         <tr key={`ema-${signal.time}-${index}`}>
                           <td>{new Date(signal.time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
                           <td><span className={`signal-pill ${signal.action.toLowerCase()}`}>{signal.action}</span></td>
                           <td>₹{Number(signal.entry).toFixed(2)}</td>
+                          <td className={priceAtSignalTime > signal.entry ? 'up' : priceAtSignalTime < signal.entry ? 'down' : ''}>₹{Number(priceAtSignalTime).toFixed(2)}</td>
                           <td>₹{tradeCost.totalCashRequired.toFixed(2)}<small>Premium ₹{tradeCost.notional.toFixed(2)} + fees ₹{tradeCost.totalCharges.toFixed(2)}</small></td>
                           <td>{parts[0].replace('Liquidity sweep + ', '').replace('Institutional ', '')}</td>
                           <td>{parts[1] || 'Confirmed structure'}</td>
@@ -2462,6 +2579,7 @@ function PCRAnalysis({ apiKey }) {
                           <td>₹{Number(signal.stopLoss).toFixed(2)}<small>(EMA Contrarian SL)</small></td>
                           <td>₹{Number(signal.outcome === 'True' ? signal.target : signal.outcome === 'False' ? signal.stopLoss : signal.entry).toFixed(2)}</td>
                           <td className={signal.outcome === 'Pending' ? '' : signal.outcome === 'True' ? 'profit' : 'loss'}>{(signal.action === 'BUY' ? (signal.outcome === 'True' ? signal.target - signal.entry : signal.outcome === 'False' ? signal.stopLoss - signal.entry : 0) : (signal.outcome === 'True' ? signal.entry - signal.target : signal.outcome === 'False' ? signal.entry - signal.stopLoss : 0)).toFixed(2)} pts</td>
+                          <td className={currentPLPoints > 0 ? 'profit' : currentPLPoints < 0 ? 'loss' : ''}>{currentPLPoints.toFixed(2)} pts</td>
                           <td><span className={`outcome-pill ${signal.outcome.toLowerCase()}`}>{signal.outcome}</span></td>
                           <td>{signal.evaluation}</td>
                           <td>{signal.reason}</td>
