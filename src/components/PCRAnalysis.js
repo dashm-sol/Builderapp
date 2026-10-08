@@ -16,7 +16,7 @@ import './PCRAnalysis.css';
 import KiteAPI from '../services/kiteAPI';
 import CandlestickChart from './CandlestickChart';
 import AutoTradePanel from './AutoTradePanel';
-import { TRADING_CONSTANTS, TIMEFRAME_OPTIONS as TIMEFRAME_OPTIONS_CONST, SIGNAL_ACTIONS, SIGNAL_OUTCOMES } from '../services/tradingConstants';
+import { TRADING_CONSTANTS, TIMEFRAME_OPTIONS as TIMEFRAME_OPTIONS_CONST, SIGNAL_ACTIONS, SIGNAL_OUTCOMES, HISTORICAL_DATA_CONFIG, SIGNAL_QUALITY_CONFIG } from '../services/tradingConstants';
 
 ChartJS.register(
   LinearScale,
@@ -38,6 +38,142 @@ function calculateEma(candles, period) {
     return { time: Math.floor(candle.x / 1000), value: ema };
   });
 }
+
+// ==================== PRIORITY 4: SIGNAL QUALITY ENHANCEMENTS ====================
+
+// Calculate VWAP (Volume Weighted Average Price)
+function calculateVwap(candles) {
+  let cumulativeTPV = 0; // Cumulative (Typical Price × Volume)
+  let cumulativeVolume = 0;
+
+  return candles.map((candle, index) => {
+    // Typical Price = (High + Low + Close) / 3
+    const typicalPrice = (candle.h + candle.l + candle.c) / 3;
+    // Assume volume is 1 if not provided (for OHLC data)
+    const volume = candle.v || 1;
+
+    cumulativeTPV += typicalPrice * volume;
+    cumulativeVolume += volume;
+
+    // VWAP = Cumulative TPV / Cumulative Volume
+    const vwap = cumulativeTPV / Math.max(cumulativeVolume, 1);
+
+    return {
+      time: Math.floor(candle.x / 1000),
+      value: Number(vwap.toFixed(2)),
+    };
+  });
+}
+
+// Check if price is above VWAP (bullish) or below (bearish)
+function getVwapAlignment(currentPrice, vwapValue) {
+  if (!vwapValue) return null;
+  const distance = Math.abs(currentPrice - vwapValue);
+  const percentDistance = (distance / vwapValue) * 100;
+
+  if (currentPrice > vwapValue) {
+    return {
+      alignment: 'BULLISH',
+      distance,
+      percentDistance,
+      isAligned: true,
+    };
+  } else if (currentPrice < vwapValue) {
+    return {
+      alignment: 'BEARISH',
+      distance,
+      percentDistance,
+      isAligned: true,
+    };
+  }
+  return null;
+}
+
+// Calculate average volume of last N candles
+function getAverageVolume(candles, lookback = 20) {
+  const recentCandles = candles.slice(-lookback);
+  const totalVolume = recentCandles.reduce((sum, candle) => sum + (candle.v || 1), 0);
+  return totalVolume / Math.max(recentCandles.length, 1);
+}
+
+// Check if current volume confirms the move (above average)
+function getVolumeConfirmation(currentCandle, averageVolume) {
+  const currentVolume = currentCandle.v || 1;
+  const threshold = averageVolume * SIGNAL_QUALITY_CONFIG.VOLUME_THRESHOLD_MULTIPLIER;
+  return {
+    currentVolume,
+    averageVolume,
+    threshold,
+    isConfirmed: currentVolume >= threshold,
+    ratio: (currentVolume / averageVolume).toFixed(2),
+  };
+}
+
+// Calculate multi-timeframe bias by comparing EMA positions
+function getMultiTimeframeBias(candles) {
+  if (candles.length < 50) return null;
+
+  const ema20 = calculateEma(candles, 20);
+  const ema50 = calculateEma(candles, 50);
+  const lastPrice = candles[candles.length - 1].c;
+  const lastEma20 = ema20[ema20.length - 1]?.value || 0;
+  const lastEma50 = ema50[ema50.length - 1]?.value || 0;
+
+  // Bullish bias: Price > EMA20 > EMA50
+  const bullishBias = lastPrice > lastEma20 && lastEma20 > lastEma50;
+  // Bearish bias: Price < EMA20 < EMA50
+  const bearishBias = lastPrice < lastEma20 && lastEma20 < lastEma50;
+
+  return {
+    bias: bullishBias ? 'BULLISH' : bearishBias ? 'BEARISH' : 'NEUTRAL',
+    isBullish: bullishBias,
+    isBearish: bearishBias,
+    priceVsEma20: lastPrice > lastEma20 ? 'ABOVE' : 'BELOW',
+    ema20VsEma50: lastEma20 > lastEma50 ? 'ABOVE' : 'BELOW',
+  };
+}
+
+// Calculate signal confidence score (0-5)
+function calculateSignalConfidence(signal, vwapAlignment, volumeConfirm, multiTFBias, hasPattern) {
+  let score = 0;
+
+  // Candlestick pattern confirmation (+1.0)
+  if (hasPattern) score += 1.0;
+
+  // VWAP alignment confirmation (+0.8)
+  if (SIGNAL_QUALITY_CONFIG.VWAP_FILTER_ENABLED && vwapAlignment?.isAligned) {
+    const signalDirection = signal.action === 'BUY' ? 'BULLISH' : 'BEARISH';
+    if (vwapAlignment.alignment === signalDirection) {
+      score += 0.8;
+    }
+  }
+
+  // Volume confirmation (+0.7)
+  if (SIGNAL_QUALITY_CONFIG.VOLUME_CONFIRMATION_ENABLED && volumeConfirm?.isConfirmed) {
+    score += 0.7;
+  }
+
+  // EMA support confirmation (+0.8)
+  if (SIGNAL_QUALITY_CONFIG.EMA_FILTER_ENABLED && multiTFBias) {
+    const signalDirection = signal.action === 'BUY' ? 'bullish' : 'bearish';
+    const isBullish = signalDirection === 'bullish';
+    if ((isBullish && multiTFBias.isBullish) || (!isBullish && multiTFBias.isBearish)) {
+      score += 0.8;
+    }
+  }
+
+  // Multi-timeframe bias alignment (+0.9)
+  if (SIGNAL_QUALITY_CONFIG.MULTI_TF_BIAS_ENABLED && multiTFBias) {
+    const signalDirection = signal.action === 'BUY' ? 'BULLISH' : 'BEARISH';
+    if (multiTFBias.bias === signalDirection) {
+      score += 0.9;
+    }
+  }
+
+  return Number(score.toFixed(2));
+}
+
+// ==================== END SIGNAL QUALITY ENHANCEMENTS ====================
 
 function calculateRsi(candles, period = TRADING_CONSTANTS.RSI_PERIOD) {
   return candles.map((candle, index) => {
@@ -512,77 +648,91 @@ function calculateInstitutionalTradeSignal(candles, numCandles = 40) {
 }
 
 function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = [], threeMinuteCandles = [], numCandles = TRADING_CONSTANTS.DEFAULT_CANDLES) {
-  // 1-MINUTE: ONLY 8 BREAKOUT PATTERNS WITH PATTERN-BASED ENTRY & STOP
-  if (candles.length < TRADING_CONSTANTS.MIN_CANDLES_FOR_ONEMIN) {
+  // SIMPLE STRATEGY: VWAP + 10/20 EMA Crossover
+  
+  if (candles.length < 25) {
     return {
       action: SIGNAL_ACTIONS.HOLD,
       pattern: 'Insufficient data',
-      reason: `Need at least ${TRADING_CONSTANTS.MIN_CANDLES_FOR_ONEMIN} one-minute candles`,
+      reason: 'Need at least 25 candles for EMA calculation',
     };
   }
 
-  const patterns = detectOneMinuteBreakoutPatterns(candles, numCandles);
-
-  if (patterns.bullish.length > 0) {
-    const patternName = patterns.bullish[0];
-    const levels = patterns.breakoutLevels[patternName];
-
-    // Calculate target to check if it's same as entry
-    const risk = levels.entry - levels.stopLoss;
-    const target = levels.entry + (risk * 2);
-
-    // Ignore if entry and target are same
-    if (Math.abs(target - levels.entry) < 0.01) {
-      return {
-        action: 'HOLD',
-        pattern: 'Pattern ignored - entry and target are same',
-        reason: 'Entry and target prices are identical, trade skipped',
-        isOneMinuteTrade: true,
-      };
-    }
-
+  // Calculate EMAs
+  const ema10 = calculateEma(candles, 10);
+  const ema20 = calculateEma(candles, 20);
+  
+  // Get latest values
+  const lastCandle = candles[candles.length - 1];
+  const prevCandle = candles[candles.length - 2];
+  
+  const currentEma10 = ema10[ema10.length - 1]?.value || 0;
+  const currentEma20 = ema20[ema20.length - 1]?.value || 0;
+  const prevEma10 = ema10[ema10.length - 2]?.value || 0;
+  const prevEma20 = ema20[ema20.length - 2]?.value || 0;
+  
+  const currentPrice = lastCandle.c;
+  
+  // Calculate VWAP
+  const vwap = calculateVwap(candles);
+  const lastVwap = vwap[vwap.length - 1]?.value || 0;
+  
+  // Check EMA crossover
+  const bullishCross = prevEma10 <= prevEma20 && currentEma10 > currentEma20;
+  const bearishCross = prevEma10 >= prevEma20 && currentEma10 < currentEma20;
+  
+  // Check VWAP alignment
+  const priceAboveVwap = currentPrice > lastVwap;
+  const priceBelowVwap = currentPrice < lastVwap;
+  
+  // BUY Signal: EMA10 crosses above EMA20 AND price is above VWAP
+  if (bullishCross && priceAboveVwap) {
+    console.log(`[EMA-VWAP] 🟢 BUY Signal: EMA10 ${currentEma10.toFixed(2)} > EMA20 ${currentEma20.toFixed(2)}, Price ${currentPrice.toFixed(2)} > VWAP ${lastVwap.toFixed(2)}`);
+    
+    const recent = candles.slice(-20);
+    const recentLow = Math.min(...recent.map(c => c.l));
+    const risk = currentPrice - recentLow;
+    
     return {
-      action: 'BUY',
-      pattern: `Breakout: ${patternName}`,
-      reason: `${patternName} detected. Entry above ${levels.entry.toFixed(2)}, Stop below ${levels.stopLoss.toFixed(2)}`,
+      action: SIGNAL_ACTIONS.BUY,
+      pattern: 'EMA 10/20 Crossover + VWAP',
+      reason: `EMA10 crossed above EMA20 at ${currentEma10.toFixed(2)} with price above VWAP ${lastVwap.toFixed(2)}`,
       isOneMinuteTrade: true,
-      chartPatterns: [patternName],
-      breakoutLevels: levels, // Store for trade levels calculation
+      chartPatterns: ['EMA Crossover'],
+      breakoutLevels: {
+        entry: currentPrice,
+        stopLoss: recentLow,
+        type: 'EMA Crossover',
+      },
     };
   }
-
-  if (patterns.bearish.length > 0) {
-    const patternName = patterns.bearish[0];
-    const levels = patterns.breakoutLevels[patternName];
-
-    // Calculate target to check if it's same as entry
-    const risk = levels.stopLoss - levels.entry;
-    const target = levels.entry - (risk * 2);
-
-    // Ignore if entry and target are same
-    if (Math.abs(target - levels.entry) < 0.01) {
-      return {
-        action: 'HOLD',
-        pattern: 'Pattern ignored - entry and target are same',
-        reason: 'Entry and target prices are identical, trade skipped',
-        isOneMinuteTrade: true,
-      };
-    }
-
+  
+  // SELL Signal: EMA10 crosses below EMA20 AND price is below VWAP
+  if (bearishCross && priceBelowVwap) {
+    console.log(`[EMA-VWAP] 🔴 SELL Signal: EMA10 ${currentEma10.toFixed(2)} < EMA20 ${currentEma20.toFixed(2)}, Price ${currentPrice.toFixed(2)} < VWAP ${lastVwap.toFixed(2)}`);
+    
+    const recent = candles.slice(-20);
+    const recentHigh = Math.max(...recent.map(c => c.h));
+    const risk = recentHigh - currentPrice;
+    
     return {
-      action: 'SELL',
-      pattern: `Breakout: ${patternName}`,
-      reason: `${patternName} detected. Entry below ${levels.entry.toFixed(2)}, Stop above ${levels.stopLoss.toFixed(2)}`,
+      action: SIGNAL_ACTIONS.SELL,
+      pattern: 'EMA 10/20 Crossover + VWAP',
+      reason: `EMA10 crossed below EMA20 at ${currentEma10.toFixed(2)} with price below VWAP ${lastVwap.toFixed(2)}`,
       isOneMinuteTrade: true,
-      chartPatterns: [patternName],
-      breakoutLevels: levels, // Store for trade levels calculation
+      chartPatterns: ['EMA Crossover'],
+      breakoutLevels: {
+        entry: currentPrice,
+        stopLoss: recentHigh,
+        type: 'EMA Crossover',
+      },
     };
   }
-
+  
   return {
     action: 'HOLD',
-    pattern: 'No breakout patterns detected',
-    reason: 'Waiting for one of 8 breakout patterns',
+    pattern: 'EMA 10/20 Crossover + VWAP',
+    reason: `Waiting for EMA crossover. Current EMA10: ${currentEma10.toFixed(2)}, EMA20: ${currentEma20.toFixed(2)}, VWAP: ${lastVwap.toFixed(2)}`,
     isOneMinuteTrade: true,
   };
 }
@@ -788,6 +938,8 @@ function calculateTradeCost(entry, lotSize) {
 
 function buildSignalRows(candles, oneMinuteMode = false, fiveMinuteCandles = [], threeMinuteCandles = [], numCandles = TRADING_CONSTANTS.DEFAULT_CANDLES) {
   let activeTradeUntil = 0;
+  console.log('buildSignalRows time', new Date())
+  console.log('buildSignalRows', candles?.length)
   return candles
     .map((_, index) => {
       if (index < 10) return null;
@@ -995,6 +1147,9 @@ function PCRAnalysis({ apiKey }) {
   const lastCandleOpenRef = React.useRef(null);
   const currentCandleBoundaryRef = React.useRef(null);
   const currentCandleDataRef = React.useRef({ time: null, open: null, high: null, low: null, close: null });
+  const previousCandleLengthRef = React.useRef(0);
+  const livePriceRef = React.useRef(null);
+  const lastPolledLengthRef = React.useRef(0);
   const [latestCandle, setLatestCandle] = useState(null);
   const [loading, setLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(false);
@@ -1069,13 +1224,13 @@ function PCRAnalysis({ apiKey }) {
 
   useEffect(() => {
     if (!selectedStrike?.instrumentToken) {
-      console.log('[LiveTicks] No instrument token selected');
+    //  console.log('[LiveTicks] No instrument token selected');
       return undefined;
     }
 
     // Check if market is open
     if (!checkMarketHours()) {
-      console.log('[LiveTicks] Market is closed (9:15 AM - 3:40 PM IST on weekdays only)');
+   //   console.log('[LiveTicks] Market is closed (9:15 AM - 3:40 PM IST on weekdays only)');
       setKiteSessionError('Market is closed. Live data available 9:15 AM - 3:40 PM IST on weekdays only.');
       return undefined;
     }
@@ -1093,7 +1248,7 @@ function PCRAnalysis({ apiKey }) {
       streamRef.current.onmessage = (event) => {
         try {
           const tick = JSON.parse(event.data);
-          console.log(`[LiveTicks] Received update for ${selectedStrike.instrumentToken}: ₹${tick.lastPrice.toFixed(2)}`);
+        //  console.log(`[LiveTicks] Received update for ${selectedStrike.instrumentToken}: ₹${tick.lastPrice.toFixed(2)}`);
           streamRef.current.__lastMessageTime = Date.now();
           setLivePrice(tick.lastPrice);
         } catch (err) {
@@ -1182,7 +1337,7 @@ function PCRAnalysis({ apiKey }) {
         lastCandleOpenRef.current = livePrice;
         currentCandleBoundaryRef.current = currentCandleBoundary;
         currentCandleDataRef.current = {
-          time: currentCandleBoundary,
+          time: Math.floor(currentCandleBoundary), // Time in seconds for Lightweight Charts
           open: livePrice,
           high: livePrice,
           low: livePrice,
@@ -1204,7 +1359,7 @@ function PCRAnalysis({ apiKey }) {
         // Same candle period - update current candle tracking
         const candleOpen = lastCandleOpenRef.current ?? lastCandleData.o;
         currentCandleDataRef.current = {
-          time: currentCandleBoundaryRef.current ?? lastCandleTime,
+          time: Math.floor((currentCandleBoundaryRef.current ?? lastCandleTime)), // Ensure seconds format
           open: candleOpen,
           high: Math.max(currentCandleDataRef.current.high || lastCandleData.h, livePrice),
           low: Math.min(currentCandleDataRef.current.low || lastCandleData.l, livePrice),
@@ -1212,7 +1367,7 @@ function PCRAnalysis({ apiKey }) {
         };
 
         chartSeriesRef.current.update(currentCandleDataRef.current);
-        console.log(`[Chart] Updated candle: O=${currentCandleDataRef.current.open.toFixed(2)} H=${currentCandleDataRef.current.high.toFixed(2)} L=${currentCandleDataRef.current.low.toFixed(2)} C=${currentCandleDataRef.current.close.toFixed(2)}`);
+     //   console.log(`[Chart] Updated candle: O=${currentCandleDataRef.current.open.toFixed(2)} H=${currentCandleDataRef.current.high.toFixed(2)} L=${currentCandleDataRef.current.low.toFixed(2)} C=${currentCandleDataRef.current.close.toFixed(2)}`);
 
         // Increment tick counter to trigger signal recalculation on every tick
         setTickCounter(prev => prev + 1);
@@ -1262,11 +1417,11 @@ function PCRAnalysis({ apiKey }) {
     }
   }, [livePrice, candleData, selectedInterval]);
 
-  // Real-time signal updates based on live price ticks only (no periodic refresh)
-  // Signals recalculate on every tick, providing true real-time 1-minute trading
-  // Note: 5-minute and 3-minute candles are empty (not fetched) - signals use 1-minute data only
+  // Real-time signal updates - only triggered when candleData changes (new candle closes)
+  // Uses candleData.length to detect new candles, avoiding re-renders on every live price tick
+  // Optimization: removed livePrice & tickCounter from dependencies to prevent 60+ calls/min
   useEffect(() => {
-    if (!livePrice || candleData.length === 0 || !selectedStrike || !selectedInterval) return;
+    if (candleData.length === 0 || !selectedStrike || !selectedInterval) return;
 
     const getIntervalSeconds = (interval) => {
       return TRADING_CONSTANTS.TIMEFRAME_SECONDS[interval] || 60;
@@ -1286,23 +1441,29 @@ function PCRAnalysis({ apiKey }) {
 
       const lastCandleTime = Math.floor(lastCandleData.x / 1000);
 
-      // Only recalculate signals if we're in the same or a new candle period
-      if (currentCandleBoundary >= lastCandleTime) {
-        // Create updated candle data with live price incorporated into the last candle
-        const updatedCandleData = candleData.map((candle, idx) => {
-          if (idx === candleData.length - 1) {
-            return {
-              ...candle,
-              h: Math.max(candle.h, livePrice),
-              l: Math.min(candle.l, livePrice),
-              c: livePrice,
-            };
-          }
-          return candle;
-        });
+      // Create updated candle data with live price incorporated into the last candle
+      const updatedCandleData = candleData.map((candle, idx) => {
+        if (idx === candleData.length - 1) {
+          return {
+            ...candle,
+            h: Math.max(candle.h, livePriceRef.current || candle.h),
+            l: Math.min(candle.l, livePriceRef.current || candle.l),
+            c: livePriceRef.current || candle.c,
+          };
+        }
+        return candle;
+      });
 
-        // Recalculate signals with updated candle data
-        const oneMinuteMode = selectedInterval === 'minute';
+      // 🔑 OPTIMIZATION: Only call buildSignalRows when candleData length changes (new candle)
+      console.log(`[Signals-Effect] Triggered • candleData.length: ${candleData.length}, previousRef: ${previousCandleLengthRef.current}`);
+      const isNewCandle = candleData.length > previousCandleLengthRef.current;
+      const oneMinuteMode = selectedInterval === 'minute';
+      
+      if (isNewCandle) {
+        // 🎉 NEW CANDLE - Full signal regeneration
+        console.log(`[Signals] ✅ NEW CANDLE DETECTED! Calling buildSignalRows with length: ${candleData.length}`);
+        previousCandleLengthRef.current = candleData.length;
+        
         const currentSignal = calculateTradeSignal(updatedCandleData, oneMinuteMode, fiveMinuteCandleData, threeMinuteCandleData, numCandles);
         setTradeSignal(currentSignal);
         setAutoTradePlan(calculateCurrentTradePlan(updatedCandleData, currentSignal));
@@ -1416,7 +1577,7 @@ function PCRAnalysis({ apiKey }) {
         setSignalRows(monitoredSignalRows);
         const reverseSignals = buildReverseSignalRows(monitoredSignalRows);
         setReverseSignalRows(reverseSignals);
-        console.log(`[SignalGeneration] Original signals: ${monitoredSignalRows.length}, Reverse signals: ${reverseSignals.length}`);
+     //   console.log(`[SignalGeneration] Original signals: ${monitoredSignalRows.length}, Reverse signals: ${reverseSignals.length}`);
         setEmaStrategyRows(buildEmaStrategyRows(monitoredSignalRows, { ema20: calculateEma(updatedCandleData, 20).at(-1)?.value || 0 }));
 
         // Update EMA series on chart if they exist - use latest point only
@@ -1429,22 +1590,79 @@ function PCRAnalysis({ apiKey }) {
 
           if (ema10SeriesRef.current) {
             ema10SeriesRef.current.update(ema10Point);
-            console.log(`[RealTimeSignals-EMA10] Updated: ${ema10Point.value.toFixed(2)}`);
+        //    console.log(`[RealTimeSignals-EMA10] Updated: ${ema10Point.value.toFixed(2)}`);
           }
           if (ema20SeriesRef.current) {
             ema20SeriesRef.current.update(ema20Point);
-            console.log(`[RealTimeSignals-EMA20] Updated: ${ema20Point.value.toFixed(2)}`);
+         //   console.log(`[RealTimeSignals-EMA20] Updated: ${ema20Point.value.toFixed(2)}`);
           }
           setEma10Data(newEma10);
           setEma20Data(newEma20);
         }
 
-        console.log(`[RealTimeSignals] Updated signals for ${selectedStrike.tradingSymbol} • ${selectedInterval} • LTP: ₹${livePrice.toFixed(2)}`);
+      //  console.log(`[RealTimeSignals] Updated signals for ${selectedStrike.tradingSymbol} • ${selectedInterval} • LTP: ₹${livePrice.toFixed(2)}`);
+      } else {
+        // SAME CANDLE - Only monitor pending signals for target/SL hits, don't regenerate all signals
+        console.log(`[Signals] ⏭️  SAME CANDLE (${candleData.length}) - No buildSignalRows, monitoring only...`);
+        
+        // Only monitor existing pending signals, don't call buildSignalRows
+        const monitoredSignalRows = signalRows.map(signal => {
+          if (signal.outcome === 'Pending' && signal.entry && signal.target && signal.stopLoss) {
+            let updatedSignal = { ...signal };
+            let outcomeChanged = false;
+            
+            // Get the current candle high/low (more accurate than single tick for gap scenarios)
+            const lastCandle = updatedCandleData[updatedCandleData.length - 1];
+            const candleHigh = lastCandle.h;
+            const candleLow = lastCandle.l;
+            
+            if (signal.action === 'BUY') {
+              // BUY: Target = candle HIGH reaches target, SL = candle LOW hits stop
+              if (candleHigh >= signal.target) {
+                updatedSignal.outcome = 'True';
+                updatedSignal.evaluation = `Target ₹${signal.target.toFixed(2)} hit at high ₹${candleHigh.toFixed(2)}`;
+                outcomeChanged = true;
+              } else if (candleLow <= signal.stopLoss) {
+                updatedSignal.outcome = 'False';
+                updatedSignal.evaluation = `Stop loss ₹${signal.stopLoss.toFixed(2)} hit at low ₹${candleLow.toFixed(2)}`;
+                outcomeChanged = true;
+              }
+            } else if (signal.action === 'SELL') {
+              // SELL: Target = candle LOW reaches target, SL = candle HIGH hits stop
+              if (candleLow <= signal.target) {
+                updatedSignal.outcome = 'True';
+                updatedSignal.evaluation = `Target ₹${signal.target.toFixed(2)} hit at low ₹${candleLow.toFixed(2)}`;
+                outcomeChanged = true;
+              } else if (candleHigh >= signal.stopLoss) {
+                updatedSignal.outcome = 'False';
+                updatedSignal.evaluation = `Stop loss ₹${signal.stopLoss.toFixed(2)} hit at high ₹${candleHigh.toFixed(2)}`;
+                outcomeChanged = true;
+              }
+            }
+            
+            // Auto-exit trade if outcome changed and auto-trading is enabled
+            if (outcomeChanged && autoTradingEnabled) {
+              const exitAction = signal.action === 'BUY' ? 'SELL' : 'BUY';
+              const exitPrice = updatedSignal.outcome === 'True' ? signal.target : signal.stopLoss;
+              console.log(`[AutoTrade Exit] Executing ${exitAction} exit at ₹${exitPrice.toFixed(2)} for signal outcome: ${updatedSignal.outcome}`);
+              
+              // Call auto-exit trade function (implement in kiteAPI)
+              executeAutoTradeExit(signal, exitAction, exitPrice, updatedSignal.outcome)
+                .catch(err => console.error('[AutoTrade Exit] Failed to execute exit:', err));
+            }
+            
+            return updatedSignal;
+          }
+          return signal;
+        });
+
+        setSignalRows(monitoredSignalRows);
+        // No need to rebuild reverse signals or EMA signals - they don't change until new candle
       }
     } catch (err) {
       console.error('[RealTimeSignals] Failed to update signals with live price:', err);
     }
-  }, [livePrice, candleData, selectedStrike, selectedInterval, tickCounter]);
+  }, [candleData.length, selectedStrike, selectedInterval]);
 
   // Periodically redraw full EMA data to ensure visibility and consistency
   useEffect(() => {
@@ -1458,7 +1676,7 @@ function PCRAnalysis({ apiKey }) {
         if (fullEma10.length > 0 && fullEma20.length > 0) {
           ema10SeriesRef.current.setData(fullEma10);
           ema20SeriesRef.current.setData(fullEma20);
-          console.log(`[EMA Redraw] Redrawn full EMA lines for ${fullEma10.length} candles`);
+        //  console.log(`[EMA Redraw] Redrawn full EMA lines for ${fullEma10.length} candles`);
         }
       } catch (err) {
         console.error('[EMA Redraw] Failed to redraw EMAs:', err);
@@ -1467,6 +1685,86 @@ function PCRAnalysis({ apiKey }) {
 
     return () => clearInterval(redrawInterval);
   }, [candleData]);
+
+  // Update livePriceRef whenever livePrice changes (for access in other effects without triggering them)
+  useEffect(() => {
+    livePriceRef.current = livePrice;
+  }, [livePrice]);
+
+  // ========== NEW: Poll API Every 1 Minute for Latest Candle Data ==========
+  // This fetches fresh candle data from the API every 60 seconds
+  // When a new candle is detected (length increases), signals are regenerated
+  useEffect(() => {
+    if (!selectedStrike || !selectedInterval || candleData.length === 0) return;
+
+    // Initialize ref on first run
+    if (lastPolledLengthRef.current === 0) {
+      lastPolledLengthRef.current = candleData.length;
+    }
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const kiteAPI = new KiteAPI();
+        const now = new Date();
+        const from = new Date(now);
+        
+        // Get last 5 minutes of data (ensures we get the current candle)
+        from.setMinutes(from.getMinutes() - 5);
+
+        console.log(`[API-Poll] Fetching ${selectedInterval} candles at ${now.toLocaleTimeString()}`);
+
+        const candles = await kiteAPI.getHistoricalData({
+          instrumentToken: selectedStrike.instrumentToken,
+          interval: selectedInterval,
+          from: formatDateTime(from, '09:15:00'),
+          to: formatDateTime(now, '23:59:59'),
+        });
+
+        if (Array.isArray(candles) && candles.length > 0) {
+          // Convert API response to standard candle format
+          const toCandleData = (rawCandles) => {
+            const candlesByTimestamp = new Map();
+            rawCandles.forEach((item) => {
+              const timestamp = Array.isArray(item) ? item[0] : item?.timestamp;
+              const candle = {
+                x: new Date(timestamp).getTime(),
+                o: Number(Array.isArray(item) ? item[1] : item?.open),
+                h: Number(Array.isArray(item) ? item[2] : item?.high),
+                l: Number(Array.isArray(item) ? item[3] : item?.low),
+                c: Number(Array.isArray(item) ? item[4] : item?.close),
+              };
+              if (Number.isFinite(candle.x)
+                && Number.isFinite(candle.o)
+                && Number.isFinite(candle.h)
+                && Number.isFinite(candle.l)
+                && Number.isFinite(candle.c)) {
+                candlesByTimestamp.set(candle.x, candle);
+              }
+            });
+            return Array.from(candlesByTimestamp.values()).sort((first, second) => first.x - second.x);
+          };
+
+          const freshCandles = toCandleData(candles);
+          const newLength = freshCandles.length;
+          const lastPolledLength = lastPolledLengthRef.current;
+
+          if (newLength !== lastPolledLength) {
+            console.log(`[API-Poll] ✅ NEW CANDLE DETECTED! ${lastPolledLength} → ${newLength} candles`);
+            lastPolledLengthRef.current = newLength; // Update ref immediately
+            setCandleData(freshCandles);
+            // Signal effect will detect the length change and regenerate signals
+          } else {
+            console.log(`[API-Poll] ⏭️  SAME CANDLE (${newLength} candles)`);
+          }
+        }
+      } catch (err) {
+        console.error('[API-Poll] Failed to fetch candle data:', err.message);
+      }
+    }, 60000); // 60 seconds = 1 minute
+
+    return () => clearInterval(pollInterval);
+  }, [selectedStrike, selectedInterval]); // ✅ REMOVED candleData.length to prevent effect restart
+  // ========================================================================
 
   useEffect(() => {
     const availableExpiries = strikeOptions
@@ -1587,7 +1885,7 @@ function PCRAnalysis({ apiKey }) {
       const hasExpired = expiryDate && !Number.isNaN(expiryDate.getTime()) && expiryDate < new Date();
       const to = hasExpired ? expiryDate : new Date();
       const from = new Date(to);
-      from.setDate(from.getDate() - 30);
+      from.setDate(from.getDate() - HISTORICAL_DATA_CONFIG.daysToFetch);
       const candles = await kiteAPI.getHistoricalData({
         instrumentToken: strike.instrumentToken,
         interval,
@@ -1620,6 +1918,10 @@ function PCRAnalysis({ apiKey }) {
       const candleData = toCandleData(normalized);
       const decisionCandleData = candleData;
       const oneMinuteMode = interval === 'minute';
+      
+      // Log data volume for monitoring
+      console.log(`[Chart] Loaded ${candleData.length} candles for ${interval} interval (${HISTORICAL_DATA_CONFIG.daysToFetch} days - ${HISTORICAL_DATA_CONFIG.description})`);
+      
       let fiveMinuteCandleData = [];
       let threeMinuteCandleData = [];
 

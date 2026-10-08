@@ -99,6 +99,52 @@ export const TRADING_CONSTANTS = {
   CANDLE_UPDATE_CHECK_INTERVAL: 5000, // 5 seconds
 };
 
+// Historical Data Configuration
+// Adjust the number of days to fetch historical candlestick data
+// Current: 7 days (~5 trading days) - covers sufficient data for pattern recognition
+// Common values:
+//   - 3 days: Only recent data, faster load (~1,200 candles for 1-min)
+//   - 7 days: Balanced (default, ~2,500 candles)
+//   - 14 days: Extended history (~5,000 candles)
+//   - 30 days: Full month (~11,000 candles, slower load)
+export const HISTORICAL_DATA_CONFIG = {
+  daysToFetch: 7, // ← Change this value to adjust historical data range
+  description: '~5 trading days of historical data for pattern recognition'
+};
+
+// Signal Quality & Confirmation Rules (Priority 4 Enhancement)
+export const SIGNAL_QUALITY_CONFIG = {
+  // VWAP Filter
+  VWAP_FILTER_ENABLED: true,
+  VWAP_DISTANCE_PERCENT: 0.3, // Allow entries within 0.3% of VWAP
+  
+  // EMA Filter
+  EMA_FILTER_ENABLED: true,
+  EMA_10_PERIOD: 10,
+  EMA_20_PERIOD: 20,
+  
+  // Minimum confidence score for trading (0-5)
+  MIN_CONFIDENCE_SCORE: 1.5, // Simple strategy, lower threshold
+};
+
+// VWAP Calculation Config
+export const VWAP_CONFIG = {
+  typical_price_format: '(H + L + C) / 3',
+  cumulative_typical_price_volume: 'SUM(TP * Volume) / SUM(Volume)',
+};
+
+// RSI Calculation Config (for future use)
+export const RSI_CONFIG = {
+  RSI_14_PERIOD: 14,
+};
+
+// MACD Calculation Config (for future use)
+export const MACD_CONFIG = {
+  FAST_PERIOD: 12,
+  SLOW_PERIOD: 26,
+  SIGNAL_PERIOD: 9,
+};
+
 // Available timeframe options
 export const TIMEFRAME_OPTIONS = [
   'minute',
