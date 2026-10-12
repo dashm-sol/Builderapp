@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS,
@@ -32,7 +32,10 @@ const TIMEFRAME_OPTIONS = TIMEFRAME_OPTIONS_CONST;
 
 function calculateEma(candles, period) {
   const multiplier = 2 / (period + 1);
-  let ema = candles[0]?.c || 0;
+ // let ema = candles[0]?.c || 0;
+  const firstPeriod = candles.slice(0, period);
+  let ema = firstPeriod.reduce((sum, c) => sum + c.c, 0) / period;
+   
   return candles.map((candle, index) => {
     ema = index === 0 ? candle.c : ((candle.c - ema) * multiplier) + ema;
     return { time: Math.floor(candle.x / 1000), value: ema };
@@ -172,6 +175,118 @@ function calculateSignalConfidence(signal, vwapAlignment, volumeConfirm, multiTF
 
   return Number(score.toFixed(2));
 }
+
+// ==================== NEW COMBINED INDICATORS ====================
+
+// Calculate RSI (Relative Strength Index)
+function calculateRsiValue(candles, period = 14) {
+  if (candles.length < period + 1) return null;
+  
+  let gains = 0;
+  let losses = 0;
+  
+  for (let i = candles.length - period; i < candles.length; i++) {
+    const change = candles[i].c - candles[i - 1].c;
+    if (change > 0) gains += change;
+    else losses += Math.abs(change);
+  }
+  
+  const avgGain = gains / period;
+  const avgLoss = losses / period;
+  const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+  return 100 - (100 / (1 + rs));
+}
+
+// Calculate MACD (Moving Average Convergence Divergence)
+function calculateMacd(candles) {
+  if (candles.length < 26) return null;
+  
+  const ema12 = calculateEma(candles, 12);
+  const ema26 = calculateEma(candles, 26);
+  
+  const macdLine = ema12[ema12.length - 1].value - ema26[ema26.length - 1].value;
+  const macdLinePrev = ema12[ema12.length - 2].value - ema26[ema26.length - 2].value;
+  
+  // Simple signal line (9-period EMA of MACD, simplified as moving avg)
+  const signalLine = (macdLine + macdLinePrev) / 2;
+  const histogram = macdLine - signalLine;
+  
+  return {
+    macdLine,
+    macdLinePrev,
+    signalLine,
+    histogram,
+    isCrossAbove: macdLinePrev <= signalLine && macdLine > signalLine,
+    isCrossBelow: macdLinePrev >= signalLine && macdLine < signalLine,
+  };
+}
+
+// Calculate Bollinger Bands
+function calculateBollingerBands(candles, period = 20, stdDev = 2) {
+  if (candles.length < period) return null;
+  
+  const recentCandles = candles.slice(-period);
+  const closes = recentCandles.map(c => c.c);
+  
+  const sma = closes.reduce((a, b) => a + b) / closes.length;
+  const variance = closes.reduce((sum, c) => sum + Math.pow(c - sma, 2), 0) / closes.length;
+  const std = Math.sqrt(variance);
+  
+  const upper = sma + (std * stdDev);
+  const lower = sma - (std * stdDev);
+  const current = candles[candles.length - 1].c;
+  
+  return {
+    upper: Number(upper.toFixed(2)),
+    middle: Number(sma.toFixed(2)),
+    lower: Number(lower.toFixed(2)),
+    current,
+    isAboveUpper: current > upper,
+    isBelowLower: current < lower,
+    isBounceFromLower: current > lower && candles[candles.length - 2].c < lower,
+    isBounceFromUpper: current < upper && candles[candles.length - 2].c > upper,
+  };
+}
+
+// Calculate ATR (Average True Range)
+function calculateAtr(candles, period = 14) {
+  if (candles.length < period) return null;
+  
+  let trueRanges = 0;
+  for (let i = candles.length - period; i < candles.length; i++) {
+    const high = candles[i].h;
+    const low = candles[i].l;
+    const prevClose = i > 0 ? candles[i - 1].c : candles[i].c;
+    
+    const tr = Math.max(
+      high - low,
+      Math.abs(high - prevClose),
+      Math.abs(low - prevClose)
+    );
+    trueRanges += tr;
+  }
+  
+  return trueRanges / period;
+}
+
+// Check for volume spike
+function checkVolumeSpikeSignal(candles, lookback = 20) {
+  if (candles.length < lookback) return null;
+  
+  const recentCandles = candles.slice(-lookback - 1, -1);
+  const avgVolume = recentCandles.reduce((sum, c) => sum + (c.v || 1), 0) / lookback;
+  const currentVolume = candles[candles.length - 1].v || 1;
+  const threshold = avgVolume * 1.5; // 50% above average
+  
+  return {
+    currentVolume,
+    avgVolume: Number(avgVolume.toFixed(0)),
+    isSpike: currentVolume >= threshold,
+    ratio: Number((currentVolume / avgVolume).toFixed(2)),
+  };
+}
+
+// ==================== END COMBINED INDICATORS ====================
 
 // ==================== END SIGNAL QUALITY ENHANCEMENTS ====================
 
@@ -647,100 +762,547 @@ function calculateInstitutionalTradeSignal(candles, numCandles = 40) {
   };
 }
 
-function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = [], threeMinuteCandles = [], numCandles = TRADING_CONSTANTS.DEFAULT_CANDLES) {
-  // SIMPLE STRATEGY: VWAP + 10/20 EMA Crossover
+// function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = [], threeMinuteCandles = [], numCandles = TRADING_CONSTANTS.DEFAULT_CANDLES) {
+//   // ULTRA AGGRESSIVE STRATEGY: MAXIMUM SIGNALS (100+ per day!)
+//   // Triggers on ANY single indicator signal - no confluence required
   
-  if (candles.length < 25) {
+//   if (candles.length < 26) {
+//     return {
+//       action: SIGNAL_ACTIONS.HOLD,
+//       pattern: 'Insufficient data',
+//       reason: 'Need at least 26 candles for indicator calculation',
+//     };
+//   }
+
+//   // Calculate all indicators
+//   const ema3 = calculateEma(candles, 3);
+//   const ema5 = calculateEma(candles, 5);
+//   const ema10 = calculateEma(candles, 10);
+//   const ema20 = calculateEma(candles, 20);
+  
+//   const currentPrice = candles[candles.length - 1].c;
+//   const prevPrice = candles[candles.length - 2].c;
+//   const prev2Price = candles[candles.length - 3]?.c || prevPrice;
+  
+//   // EMA values
+//   const e3 = ema3[ema3.length - 1]?.value || 0;
+//   const e3Prev = ema3[ema3.length - 2]?.value || 0;
+//   const e5 = ema5[ema5.length - 1]?.value || 0;
+//   const e5Prev = ema5[ema5.length - 2]?.value || 0;
+//   const e10 = ema10[ema10.length - 1]?.value || 0;
+//   const e10Prev = ema10[ema10.length - 2]?.value || 0;
+//   const e20 = ema20[ema20.length - 1]?.value || 0;
+//   const e20Prev = ema20[ema20.length - 2]?.value || 0;
+  
+//   // RSI
+//   const rsi = calculateRsiValue(candles, 14) || 50;
+  
+//   // MACD
+//   const macd = calculateMacd(candles);
+  
+//   // Bollinger Bands
+//   const bb = calculateBollingerBands(candles, 20, 2);
+  
+//   // ATR
+//   const atr = calculateAtr(candles, 14) || 0;
+  
+//   // Volume spike
+//   const volumeSpike = checkVolumeSpikeSignal(candles, 20);
+  
+//   // VWAP
+//   const vwap = calculateVwap(candles);
+//   const vwapValue = vwap[vwap.length - 1]?.value || 0;
+  
+//   const recent = candles.slice(-20);
+//   const recentLow = Math.min(...recent.map(c => c.l));
+//   const recentHigh = Math.max(...recent.map(c => c.h));
+  
+//   // ============ BULLISH CONDITIONS ============
+  
+//   // 1. EMA3 > EMA5 (Ultra-fast bullish)
+//   if (e3 > e5) {
+//     console.log(`[ULTRA] 🟢 BUY: EMA3 ${e3.toFixed(2)} > EMA5 ${e5.toFixed(2)} | RSI: ${rsi.toFixed(1)} | Price: ${currentPrice.toFixed(2)}`);
+//     return {
+//       action: SIGNAL_ACTIONS.BUY,
+//       pattern: 'EMA3 > EMA5 (Ultra-Fast)',
+//       reason: `EMA3 (${e3.toFixed(2)}) above EMA5 (${e5.toFixed(2)})`,
+//       isOneMinuteTrade: true,
+//       chartPatterns: ['EMA3-Bullish'],
+//       breakoutLevels: { entry: currentPrice, stopLoss: recentLow, type: 'EMA' },
+//     };
+//   }
+  
+//   // 2. EMA5 > EMA10 (Fast bullish)
+//   if (e5Prev <= e10Prev && e5 > e10) {
+//     console.log(`[ULTRA] 🟢 BUY: EMA5 ${e5.toFixed(2)} > EMA10 ${e10.toFixed(2)} | RSI: ${rsi.toFixed(1)} | Price: ${currentPrice.toFixed(2)}`);
+//     return {
+//       action: SIGNAL_ACTIONS.BUY,
+//       pattern: 'EMA5 > EMA10 (Crossover)',
+//       reason: `EMA5 crossed above EMA10`,
+//       isOneMinuteTrade: true,
+//       chartPatterns: ['EMA5-Crossover'],
+//       breakoutLevels: { entry: currentPrice, stopLoss: recentLow, type: 'EMA' },
+//     };
+//   }
+  
+//   // 3. EMA10 > EMA20 (Medium bullish)
+//   if (e10Prev <= e20Prev && e10 > e20) {
+//     console.log(`[ULTRA] 🟢 BUY: EMA10 ${e10.toFixed(2)} > EMA20 ${e20.toFixed(2)} | RSI: ${rsi.toFixed(1)} | Price: ${currentPrice.toFixed(2)}`);
+//     return {
+//       action: SIGNAL_ACTIONS.BUY,
+//       pattern: 'EMA10 > EMA20 (Crossover)',
+//       reason: `EMA10 crossed above EMA20`,
+//       isOneMinuteTrade: true,
+//       chartPatterns: ['EMA10-Crossover'],
+//       breakoutLevels: { entry: currentPrice, stopLoss: recentLow, type: 'EMA' },
+//     };
+//   }
+  
+//   // 4. EMA5 > EMA20 (Strong bullish)
+//   if (e5Prev <= e20Prev && e5 > e20) {
+//     console.log(`[ULTRA] 🟢 BUY: EMA5 ${e5.toFixed(2)} > EMA20 ${e20.toFixed(2)} | RSI: ${rsi.toFixed(1)} | Price: ${currentPrice.toFixed(2)}`);
+//     return {
+//       action: SIGNAL_ACTIONS.BUY,
+//       pattern: 'EMA5 > EMA20 (Crossover)',
+//       reason: `EMA5 crossed above EMA20`,
+//       isOneMinuteTrade: true,
+//       chartPatterns: ['EMA5-EMA20'],
+//       breakoutLevels: { entry: currentPrice, stopLoss: recentLow, type: 'EMA' },
+//     };
+//   }
+  
+//   // 5. RSI < 25 (Strong oversold)
+//   if (rsi < 25) {
+//     console.log(`[ULTRA] 🟢 BUY: RSI ${rsi.toFixed(1)} (Oversold) | Price: ${currentPrice.toFixed(2)}`);
+//     return {
+//       action: SIGNAL_ACTIONS.BUY,
+//       pattern: 'RSI Oversold',
+//       reason: `RSI ${rsi.toFixed(1)} - Strong oversold condition`,
+//       isOneMinuteTrade: true,
+//       chartPatterns: ['RSI-Oversold'],
+//       breakoutLevels: { entry: currentPrice, stopLoss: recentLow, type: 'RSI' },
+//     };
+//   }
+  
+//   // 6. RSI 25-35 with price up (Oversold bounce)
+//   if (rsi >= 25 && rsi <= 35 && currentPrice > prevPrice) {
+//     console.log(`[ULTRA] 🟢 BUY: RSI ${rsi.toFixed(1)} Bounce + Up | Price: ${currentPrice.toFixed(2)}`);
+//     return {
+//       action: SIGNAL_ACTIONS.BUY,
+//       pattern: 'RSI Oversold Bounce',
+//       reason: `RSI ${rsi.toFixed(1)} with bullish candle`,
+//       isOneMinuteTrade: true,
+//       chartPatterns: ['RSI-Bounce'],
+//       breakoutLevels: { entry: currentPrice, stopLoss: recentLow, type: 'RSI' },
+//     };
+//   }
+  
+//   // 7. MACD positive (Any MACD above signal line)
+//   if (macd && macd.isCrossAbove) {
+//     console.log(`[ULTRA] 🟢 BUY: MACD Cross Above | Price: ${currentPrice.toFixed(2)}`);
+//     return {
+//       action: SIGNAL_ACTIONS.BUY,
+//       pattern: 'MACD Bullish Cross',
+//       reason: `MACD crossed above signal line`,
+//       isOneMinuteTrade: true,
+//       chartPatterns: ['MACD-Cross'],
+//       breakoutLevels: { entry: currentPrice, stopLoss: recentLow, type: 'MACD' },
+//     };
+//   }
+  
+//   // 8. Price > BB Middle (Recovery)
+//   if (bb && currentPrice > bb.middle && prevPrice <= bb.middle) {
+//     console.log(`[ULTRA] 🟢 BUY: Price > BB Middle | Price: ${currentPrice.toFixed(2)}`);
+//     return {
+//       action: SIGNAL_ACTIONS.BUY,
+//       pattern: 'BB Middle Recovery',
+//       reason: `Price crossed above Bollinger middle band`,
+//       isOneMinuteTrade: true,
+//       chartPatterns: ['BB-Middle'],
+//       breakoutLevels: { entry: currentPrice, stopLoss: recentLow, type: 'BB' },
+//     };
+//   }
+  
+//   // 9. Price bounce from BB Lower
+//   if (bb && bb.isBounceFromLower) {
+//     console.log(`[ULTRA] 🟢 BUY: Price Bounce from BB Lower | Price: ${currentPrice.toFixed(2)}`);
+//     return {
+//       action: SIGNAL_ACTIONS.BUY,
+//       pattern: 'BB Lower Bounce',
+//       reason: `Price bounced from lower Bollinger band`,
+//       isOneMinuteTrade: true,
+//       chartPatterns: ['BB-Lower'],
+//       breakoutLevels: { entry: currentPrice, stopLoss: recentLow, type: 'BB' },
+//     };
+//   }
+  
+//   // 10. Volume spike with up candle
+//   if (volumeSpike && volumeSpike.isSpike && currentPrice > prevPrice) {
+//     console.log(`[ULTRA] 🟢 BUY: Volume Spike UP | Vol: ${volumeSpike.ratio}x | Price: ${currentPrice.toFixed(2)}`);
+//     return {
+//       action: SIGNAL_ACTIONS.BUY,
+//       pattern: 'Volume Spike Bullish',
+//       reason: `Volume ${volumeSpike.ratio}x average with bullish candle`,
+//       isOneMinuteTrade: true,
+//       chartPatterns: ['Volume-Spike'],
+//       breakoutLevels: { entry: currentPrice, stopLoss: recentLow, type: 'Volume' },
+//     };
+//   }
+  
+//   // ============ BEARISH CONDITIONS ============
+  
+//   // 1. EMA3 < EMA5 (Ultra-fast bearish)
+//   if (e3 < e5) {
+//     console.log(`[ULTRA] 🔴 SELL: EMA3 ${e3.toFixed(2)} < EMA5 ${e5.toFixed(2)} | RSI: ${rsi.toFixed(1)} | Price: ${currentPrice.toFixed(2)}`);
+//     return {
+//       action: SIGNAL_ACTIONS.SELL,
+//       pattern: 'EMA3 < EMA5 (Ultra-Fast)',
+//       reason: `EMA3 (${e3.toFixed(2)}) below EMA5 (${e5.toFixed(2)})`,
+//       isOneMinuteTrade: true,
+//       chartPatterns: ['EMA3-Bearish'],
+//       breakoutLevels: { entry: currentPrice, stopLoss: recentHigh, type: 'EMA' },
+//     };
+//   }
+  
+//   // 2. EMA5 < EMA10 (Fast bearish)
+//   if (e5Prev >= e10Prev && e5 < e10) {
+//     console.log(`[ULTRA] 🔴 SELL: EMA5 ${e5.toFixed(2)} < EMA10 ${e10.toFixed(2)} | RSI: ${rsi.toFixed(1)} | Price: ${currentPrice.toFixed(2)}`);
+//     return {
+//       action: SIGNAL_ACTIONS.SELL,
+//       pattern: 'EMA5 < EMA10 (Crossover)',
+//       reason: `EMA5 crossed below EMA10`,
+//       isOneMinuteTrade: true,
+//       chartPatterns: ['EMA5-Crossover'],
+//       breakoutLevels: { entry: currentPrice, stopLoss: recentHigh, type: 'EMA' },
+//     };
+//   }
+  
+//   // 3. EMA10 < EMA20 (Medium bearish)
+//   if (e10Prev >= e20Prev && e10 < e20) {
+//     console.log(`[ULTRA] 🔴 SELL: EMA10 ${e10.toFixed(2)} < EMA20 ${e20.toFixed(2)} | RSI: ${rsi.toFixed(1)} | Price: ${currentPrice.toFixed(2)}`);
+//     return {
+//       action: SIGNAL_ACTIONS.SELL,
+//       pattern: 'EMA10 < EMA20 (Crossover)',
+//       reason: `EMA10 crossed below EMA20`,
+//       isOneMinuteTrade: true,
+//       chartPatterns: ['EMA10-Crossover'],
+//       breakoutLevels: { entry: currentPrice, stopLoss: recentHigh, type: 'EMA' },
+//     };
+//   }
+  
+//   // 4. EMA5 < EMA20 (Strong bearish)
+//   if (e5Prev >= e20Prev && e5 < e20) {
+//     console.log(`[ULTRA] 🔴 SELL: EMA5 ${e5.toFixed(2)} < EMA20 ${e20.toFixed(2)} | RSI: ${rsi.toFixed(1)} | Price: ${currentPrice.toFixed(2)}`);
+//     return {
+//       action: SIGNAL_ACTIONS.SELL,
+//       pattern: 'EMA5 < EMA20 (Crossover)',
+//       reason: `EMA5 crossed below EMA20`,
+//       isOneMinuteTrade: true,
+//       chartPatterns: ['EMA5-EMA20'],
+//       breakoutLevels: { entry: currentPrice, stopLoss: recentHigh, type: 'EMA' },
+//     };
+//   }
+  
+//   // 5. RSI > 75 (Strong overbought)
+//   if (rsi > 75) {
+//     console.log(`[ULTRA] 🔴 SELL: RSI ${rsi.toFixed(1)} (Overbought) | Price: ${currentPrice.toFixed(2)}`);
+//     return {
+//       action: SIGNAL_ACTIONS.SELL,
+//       pattern: 'RSI Overbought',
+//       reason: `RSI ${rsi.toFixed(1)} - Strong overbought condition`,
+//       isOneMinuteTrade: true,
+//       chartPatterns: ['RSI-Overbought'],
+//       breakoutLevels: { entry: currentPrice, stopLoss: recentHigh, type: 'RSI' },
+//     };
+//   }
+  
+//   // 6. RSI 65-75 with price down (Overbought pullback)
+//   if (rsi >= 65 && rsi <= 75 && currentPrice < prevPrice) {
+//     console.log(`[ULTRA] 🔴 SELL: RSI ${rsi.toFixed(1)} Pullback + Down | Price: ${currentPrice.toFixed(2)}`);
+//     return {
+//       action: SIGNAL_ACTIONS.SELL,
+//       pattern: 'RSI Overbought Pullback',
+//       reason: `RSI ${rsi.toFixed(1)} with bearish candle`,
+//       isOneMinuteTrade: true,
+//       chartPatterns: ['RSI-Pullback'],
+//       breakoutLevels: { entry: currentPrice, stopLoss: recentHigh, type: 'RSI' },
+//     };
+//   }
+  
+//   // 7. MACD negative (Any MACD below signal line)
+//   if (macd && macd.isCrossBelow) {
+//     console.log(`[ULTRA] 🔴 SELL: MACD Cross Below | Price: ${currentPrice.toFixed(2)}`);
+//     return {
+//       action: SIGNAL_ACTIONS.SELL,
+//       pattern: 'MACD Bearish Cross',
+//       reason: `MACD crossed below signal line`,
+//       isOneMinuteTrade: true,
+//       chartPatterns: ['MACD-Cross'],
+//       breakoutLevels: { entry: currentPrice, stopLoss: recentHigh, type: 'MACD' },
+//     };
+//   }
+  
+//   // 8. Price < BB Middle (Weakness)
+//   if (bb && currentPrice < bb.middle && prevPrice >= bb.middle) {
+//     console.log(`[ULTRA] 🔴 SELL: Price < BB Middle | Price: ${currentPrice.toFixed(2)}`);
+//     return {
+//       action: SIGNAL_ACTIONS.SELL,
+//       pattern: 'BB Middle Breakdown',
+//       reason: `Price crossed below Bollinger middle band`,
+//       isOneMinuteTrade: true,
+//       chartPatterns: ['BB-Middle'],
+//       breakoutLevels: { entry: currentPrice, stopLoss: recentHigh, type: 'BB' },
+//     };
+//   }
+  
+//   // 9. Price bounce from BB Upper
+//   if (bb && bb.isBounceFromUpper) {
+//     console.log(`[ULTRA] 🔴 SELL: Price Bounce from BB Upper | Price: ${currentPrice.toFixed(2)}`);
+//     return {
+//       action: SIGNAL_ACTIONS.SELL,
+//       pattern: 'BB Upper Bounce',
+//       reason: `Price bounced from upper Bollinger band`,
+//       isOneMinuteTrade: true,
+//       chartPatterns: ['BB-Upper'],
+//       breakoutLevels: { entry: currentPrice, stopLoss: recentHigh, type: 'BB' },
+//     };
+//   }
+  
+//   // 10. Volume spike with down candle
+//   if (volumeSpike && volumeSpike.isSpike && currentPrice < prevPrice) {
+//     console.log(`[ULTRA] 🔴 SELL: Volume Spike DOWN | Vol: ${volumeSpike.ratio}x | Price: ${currentPrice.toFixed(2)}`);
+//     return {
+//       action: SIGNAL_ACTIONS.SELL,
+//       pattern: 'Volume Spike Bearish',
+//       reason: `Volume ${volumeSpike.ratio}x average with bearish candle`,
+//       isOneMinuteTrade: true,
+//       chartPatterns: ['Volume-Spike'],
+//       breakoutLevels: { entry: currentPrice, stopLoss: recentHigh, type: 'Volume' },
+//     };
+//   }
+  
+//   return {
+//     action: 'HOLD',
+//     pattern: 'Waiting for signal',
+//     reason: `Monitoring - EMA3: ${e3.toFixed(2)}, EMA5: ${e5.toFixed(2)}, RSI: ${rsi.toFixed(1)}, Price: ${currentPrice.toFixed(2)}`,
+//     isOneMinuteTrade: true,
+//   };
+// }
+function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = [], threeMinuteCandles = [], numCandles = TRADING_CONSTANTS.DEFAULT_CANDLES) {
+  // AGGRESSIVE STRATEGY: ALL COMBINED SIGNALS for Maximum Signals (40-50+ per day)
+  
+  if (candles.length < 26) {
     return {
       action: SIGNAL_ACTIONS.HOLD,
       pattern: 'Insufficient data',
-      reason: 'Need at least 25 candles for EMA calculation',
+      reason: 'Need at least 26 candles for indicator calculation',
     };
   }
 
-  // Calculate EMAs
-  const ema10 = calculateEma(candles, 10);
-  const ema20 = calculateEma(candles, 20);
+  // Calculate all indicators
+  const ema5 = calculateEma(candles, 5);
+  //const lookbackBuffer = period * 3; // 21 * 3 = 63 candles
+
+// Slice the most recent 63 candles from the end of the array
+const recentCandles = candles.slice(-27); 
+const recentCandles1 = candles.slice(-63); 
+  const ema10 = calculateEma(candles, 9);
+  const ema20 = calculateEma(candles, 21);
   
-  // Get latest values
-  const lastCandle = candles[candles.length - 1];
-  const prevCandle = candles[candles.length - 2];
+  const currentPrice = candles[candles.length - 1].c;
+  const prevPrice = candles[candles.length - 2].c;
   
-  const currentEma10 = ema10[ema10.length - 1]?.value || 0;
-  const currentEma20 = ema20[ema20.length - 1]?.value || 0;
-  const prevEma10 = ema10[ema10.length - 2]?.value || 0;
-  const prevEma20 = ema20[ema20.length - 2]?.value || 0;
+  // EMA values
+  const e5 = ema5[ema5.length - 1]?.value || 0;
+  const e5Prev = ema5[ema5.length - 2]?.value || 0;
+  const e10 = ema10[ema10.length - 1]?.value || 0;
+  const e10Prev = ema10[ema10.length - 2]?.value || 0;
+  const e20 = ema20[ema20.length - 1]?.value || 0;
+  const e20Prev = ema20[ema20.length - 2]?.value || 0;
   
-  const currentPrice = lastCandle.c;
+  // RSI
+  const rsi = calculateRsiValue(candles, 14) || 50;
   
-  // Calculate VWAP
+  // MACD
+  const macd = calculateMacd(candles);
+  
+  // Bollinger Bands
+  const bb = calculateBollingerBands(candles, 20, 2);
+  
+  // ATR
+  const atr = calculateAtr(candles, 14) || 0;
+  
+  // Volume spike
+  const volumeSpike = checkVolumeSpikeSignal(candles, 20);
+  
+  // VWAP
   const vwap = calculateVwap(candles);
-  const lastVwap = vwap[vwap.length - 1]?.value || 0;
+  const vwapValue = vwap[vwap.length - 1]?.value || 0;
   
-  // Check EMA crossover
-  const bullishCross = prevEma10 <= prevEma20 && currentEma10 > currentEma20;
-  const bearishCross = prevEma10 >= prevEma20 && currentEma10 < currentEma20;
+  const recent = candles.slice(-3);
+  const recentLow = Math.min(...recent.map(c => c.l));
+  const recentHigh = Math.max(...recent.map(c => c.h));
   
-  // Check VWAP alignment
-  const priceAboveVwap = currentPrice > lastVwap;
-  const priceBelowVwap = currentPrice < lastVwap;
+  // ============ BULLISH SIGNALS ============
+  const bullishSignals = [];
   
-  // BUY Signal: EMA10 crosses above EMA20 AND price is above VWAP
-  if (bullishCross && priceAboveVwap) {
-    console.log(`[EMA-VWAP] 🟢 BUY Signal: EMA10 ${currentEma10.toFixed(2)} > EMA20 ${currentEma20.toFixed(2)}, Price ${currentPrice.toFixed(2)} > VWAP ${lastVwap.toFixed(2)}`);
-    
-    const recent = candles.slice(-20);
-    const recentLow = Math.min(...recent.map(c => c.l));
-    const risk = currentPrice - recentLow;
+  // Signal 1: EMA5 crosses above EMA10
+ // if (e5Prev <= e10Prev && e5 > e10) bullishSignals.push('EMA5>EMA10');
+  
+  // Signal 2: EMA10 crosses above EMA20
+  if (prevPrice < e10 && e10 > e20) bullishSignals.push('EMA10>EMA20');
+
+ //  if (prevPrice < e10 &&e10Prev < e20Prev && e10 > e20) bullishSignals.push('EMA10>EMA20');
+  
+  
+  // Signal 3: EMA5 crosses above EMA20
+ // if (e5Prev <= e20Prev && e5 > e20) bullishSignals.push('EMA5>EMA20');
+  
+  // Signal 4: RSI oversold bounce (< 30 with upward price)
+ // if (rsi < 30 && currentPrice > prevPrice) bullishSignals.push('RSI<30');
+  
+  // Signal 5: MACD crosses above signal line
+  //if (macd && macd.isCrossAbove) bullishSignals.push('MACD-Cross');
+  
+  // Signal 6: Price bounces from Bollinger lower band
+  //if (bb && bb.isBounceFromLower) bullishSignals.push('BB-Lower');
+  
+  // Signal 7: Price above VWAP with uptrend
+  //if (currentPrice > vwapValue && e10 > e20) bullishSignals.push('Price>VWAP');
+  
+  // Signal 8: Volume spike on up candle
+  //if (volumeSpike && volumeSpike.isSpike && currentPrice > prevPrice) bullishSignals.push('Vol-Spike');
+  
+  // ============ BEARISH SIGNALS ============
+  const bearishSignals = [];
+  
+  // Signal 1: EMA5 crosses below EMA10
+ // if (e5Prev >= e10Prev && e5 < e10) bearishSignals.push('EMA5<EMA10');
+  
+  // Signal 2: EMA10 crosses below EMA20
+  //if (e10Prev >= e20Prev && e10 < e20) bearishSignals.push('EMA10<EMA20');
+   if (prevPrice > e20 && e10 < e20) bearishSignals.push('EMA10<EMA20');
+   
+   // if ( prevPrice < e10 &&e10Prev > e20Prev && e10 < e20) bearishSignals.push('EMA10<EMA20');
+  // Signal 3: EMA5 crosses below EMA20
+ // if (e5Prev >= e20Prev && e5 < e20) bearishSignals.push('EMA5<EMA20');
+  
+  // Signal 4: RSI overbought bounce (> 70 with downward price)
+ // if (rsi > 70 && currentPrice < prevPrice) bearishSignals.push('RSI>70');
+  
+//  if (macd && macd.isCrossBelow) bearishSignals.push('MACD-Cross');
+  
+  // Signal 6: Price bounces from Bollinger upper band
+ // if (bb && bb.isBounceFromUpper) bearishSignals.push('BB-Upper');
+  
+  // Signal 7: Price below VWAP with downtrend
+ // if (currentPrice < vwapValue && e10 < e20) bearishSignals.push('Price<VWAP');
+  
+  // Signal 8: Volume spike on down candle
+ // if (volumeSpike && volumeSpike.isSpike && currentPrice < prevPrice) bearishSignals.push('Vol-Spike');
+  
+  // ============ GENERATE SIGNALS ============
+  
+  // BUY Signal: At least 2 bullish signals
+  if (bullishSignals.length >= 1) {
+    const signalDescription = bullishSignals.join(' + ');
+    console.log(`[MULTI] 🟢 BUY Signal: ${signalDescription} | RSI: ${rsi.toFixed(1)} | Price: ${currentPrice.toFixed(2)}`);
     
     return {
       action: SIGNAL_ACTIONS.BUY,
-      pattern: 'EMA 10/20 Crossover + VWAP',
-      reason: `EMA10 crossed above EMA20 at ${currentEma10.toFixed(2)} with price above VWAP ${lastVwap.toFixed(2)}`,
+      pattern: 'Multi-Indicator Bullish Confluence',
+      reason: `${bullishSignals.length} bullish signals: ${signalDescription}`,
       isOneMinuteTrade: true,
-      chartPatterns: ['EMA Crossover'],
+      chartPatterns: bullishSignals,
       breakoutLevels: {
         entry: currentPrice,
         stopLoss: recentLow,
-        type: 'EMA Crossover',
+        type: 'Multi-Indicator',
       },
     };
   }
   
-  // SELL Signal: EMA10 crosses below EMA20 AND price is below VWAP
-  if (bearishCross && priceBelowVwap) {
-    console.log(`[EMA-VWAP] 🔴 SELL Signal: EMA10 ${currentEma10.toFixed(2)} < EMA20 ${currentEma20.toFixed(2)}, Price ${currentPrice.toFixed(2)} < VWAP ${lastVwap.toFixed(2)}`);
-    
-    const recent = candles.slice(-20);
-    const recentHigh = Math.max(...recent.map(c => c.h));
-    const risk = recentHigh - currentPrice;
+  // SELL Signal: At least 2 bearish signals
+  if (bearishSignals.length >= 1) {
+    const signalDescription = bearishSignals.join(' + ');
+    console.log(`[MULTI] 🔴 SELL Signal: ${signalDescription} | RSI: ${rsi.toFixed(1)} | Price: ${currentPrice.toFixed(2)}`);
     
     return {
       action: SIGNAL_ACTIONS.SELL,
-      pattern: 'EMA 10/20 Crossover + VWAP',
-      reason: `EMA10 crossed below EMA20 at ${currentEma10.toFixed(2)} with price below VWAP ${lastVwap.toFixed(2)}`,
+      pattern: 'Multi-Indicator Bearish Confluence',
+      reason: `${bearishSignals.length} bearish signals: ${signalDescription}`,
       isOneMinuteTrade: true,
-      chartPatterns: ['EMA Crossover'],
+      chartPatterns: bearishSignals,
       breakoutLevels: {
         entry: currentPrice,
         stopLoss: recentHigh,
-        type: 'EMA Crossover',
+        type: 'Multi-Indicator',
+      },
+    };
+  }
+  
+  // Single strong signals (if confidence is very high)
+  if (bullishSignals.length === 1 && (bullishSignals[0] === 'EMA5>EMA10' || bullishSignals[0] === 'MACD-Cross')) {
+    const signalDescription = bullishSignals.join(' + ');
+    console.log(`[MULTI] 🟢 BUY Signal (Strong): ${signalDescription} | RSI: ${rsi.toFixed(1)} | Price: ${currentPrice.toFixed(2)}`);
+    
+    return {
+      action: SIGNAL_ACTIONS.BUY,
+      pattern: 'Multi-Indicator Strong Bullish',
+      reason: `Strong bullish signal: ${signalDescription}`,
+      isOneMinuteTrade: true,
+      chartPatterns: bullishSignals,
+      breakoutLevels: {
+        entry: currentPrice,
+        stopLoss: recentLow,
+        type: 'Multi-Indicator',
+      },
+    };
+  }
+  
+  if (bearishSignals.length === 1 && (bearishSignals[0] === 'EMA5<EMA10' || bearishSignals[0] === 'MACD-Cross')) {
+    const signalDescription = bearishSignals.join(' + ');
+    console.log(`[MULTI] 🔴 SELL Signal (Strong): ${signalDescription} | RSI: ${rsi.toFixed(1)} | Price: ${currentPrice.toFixed(2)}`);
+    
+    return {
+      action: SIGNAL_ACTIONS.SELL,
+      pattern: 'Multi-Indicator Strong Bearish',
+      reason: `Strong bearish signal: ${signalDescription}`,
+      isOneMinuteTrade: true,
+      chartPatterns: bearishSignals,
+      breakoutLevels: {
+        entry: currentPrice,
+        stopLoss: recentHigh,
+        type: 'Multi-Indicator',
       },
     };
   }
   
   return {
     action: 'HOLD',
-    pattern: 'EMA 10/20 Crossover + VWAP',
-    reason: `Waiting for EMA crossover. Current EMA10: ${currentEma10.toFixed(2)}, EMA20: ${currentEma20.toFixed(2)}, VWAP: ${lastVwap.toFixed(2)}`,
+    pattern: 'Multi-Indicator System',
+    reason: `Waiting for confluence. Bullish: ${bullishSignals.length}, Bearish: ${bearishSignals.length}, RSI: ${rsi.toFixed(1)}`,
     isOneMinuteTrade: true,
   };
 }
+// function isBeforeThreePmIst(timestamp) {
+//   //const indiaTime = new Date(new Date(timestamp).toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+//  //return ((indiaTime.getHours() * 60 + indiaTime.getMinutes()) < (TRADING_CONSTANTS.TRADING_CLOSE_HOUR * 60 + TRADING_CONSTANTS.TRADING_CLOSE_MINUTE));
+//     const indiaTime = new Date(new Date(timestamp).toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+//   const currentMinutes = indiaTime.getHours() * 60 + indiaTime.getMinutes();
+  
+//   const startMinutes = TRADING_CONSTANTS.TRADING_START_HOUR * 60 + TRADING_CONSTANTS.TRADING_START_MINUTE; // 9:20 AM = 560
+//   const closeMinutes = TRADING_CONSTANTS.TRADING_CLOSE_HOUR * 60 + TRADING_CONSTANTS.TRADING_CLOSE_MINUTE; // 3:00 PM = 900
+
+//   // Must be at or after 9:20 AM AND strictly before 3:00 PM
+//  return currentMinutes >= startMinutes && currentMinutes < closeMinutes;
+// }
 
 function isBeforeThreePmIst(timestamp) {
   const indiaTime = new Date(new Date(timestamp).toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-  return indiaTime.getHours() * 60 + indiaTime.getMinutes() < TRADING_CONSTANTS.TRADING_CLOSE_HOUR * 60 + TRADING_CONSTANTS.TRADING_CLOSE_MINUTE;
+  return ((indiaTime.getHours() * 60 + indiaTime.getMinutes()) >=560) && (indiaTime.getHours() * 60 + indiaTime.getMinutes() < TRADING_CONSTANTS.TRADING_CLOSE_HOUR * 60 + TRADING_CONSTANTS.TRADING_CLOSE_MINUTE);
 }
+
 
 function calculateTradeSignal(candles, oneMinuteMode = false, fiveMinuteCandles = [], threeMinuteCandles = [], numCandles = TRADING_CONSTANTS.DEFAULT_CANDLES) {
   const signal = oneMinuteMode ? calculateOneMinuteTradeSignal(candles, fiveMinuteCandles, threeMinuteCandles, numCandles) : calculateInstitutionalTradeSignal(candles, numCandles);
