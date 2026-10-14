@@ -1,0 +1,23 @@
+Signal Generation Flow (After Each 1-Min Candle Closes)
+The Complete Sequence:
+Every Tick → Live price updates via WebSocket
+Candle Boundary Check → When 60 seconds pass, candle closes
+useEffect Triggers → With updated livePrice and candleData
+Update Last Candle → Incorporate live price into HIGH/LOW/CLOSE
+Calculate Current Signal → Run pattern detection on updated data
+Build All Signals → Scan ALL historical candles for patterns
+Evaluate Each Signal → Check if future candles hit target/SL
+Lock Outcomes → Mark as True (won), False (lost), or Pending
+Build Reverse Signals → Opposite direction of combined signals
+Build EMA Signals → OHLC patterns + EMA20 confirmation
+Update Charts → Show live price and EMA lines
+Update State → Re-render all three signal tables
+Key Points:
+On candle close: Entire signal generation runs (not incremental)
+All past signals: Recalculated with updated future candle data
+Outcomes determined: By checking if HIGH/LOW hit target/SL in future candles
+Three signal types: Combined (chart patterns), Reverse (opposite), EMA (OHLC + EMA20)
+Real-time monitoring: Pending signals checked every tick for target/SL hits
+The detailed document is saved in the session files with complete examples, timeline visualization, and code flow.
+
+Now, your EMA signals should be working because:
