@@ -1096,6 +1096,7 @@ function calculateOneMinuteTradeSignal(candles, fiveMinuteCandles = [], threeMin
       action: SIGNAL_ACTIONS.HOLD,
       pattern: 'Insufficient data',
       reason: 'Need at least 26 candles for indicator calculation',
+      emaDifference: 0,
     };
   }
 
@@ -1120,6 +1121,15 @@ const recentCandles1 = candles.slice(-63);
   const e20 = ema20[ema20.length - 1]?.value || 0;
   const e20Prev = ema20[ema20.length - 2]?.value || 0;
   
+  // Calculate EMA difference (e10 - e20)
+  let emaDifference = 0;
+  if(currentPrice > e20){
+       emaDifference = (currentPrice -e20).toFixed(2);
+  }else{
+    emaDifference = (e20 - currentPrice).toFixed(2);
+  }
+ 
+  
   // RSI
   const rsi = calculateRsiValue(candles, 14) || 50;
   
@@ -1140,17 +1150,51 @@ const recentCandles1 = candles.slice(-63);
   const vwapValue = vwap[vwap.length - 1]?.value || 0;
   
   const recent = candles.slice(-3);
-  const recentLow = currentPrice -10;
-  const recentHigh = currentPrice + 10;
+  let recentLow = currentPrice -20;
+  let recentHigh = currentPrice + 20;
+
+  
+  if( currentPrice < 100 ) {
+recentLow = currentPrice -30;
+recentHigh = currentPrice + 30;
+  }
+    else if( currentPrice  < 200 ) {
+      recentLow = currentPrice -40;
+    recentHigh = currentPrice + 40;
+    }
+    else  if( currentPrice  < 300 ) {
+      recentLow = currentPrice -50;
+      recentHigh = currentPrice + 50;
+    }
+     else   if( currentPrice  < 400 ) {
+       recentLow = currentPrice -60;
+       recentHigh = currentPrice + 60;
+     }
+     else   if( currentPrice  < 500 ) {
+       recentLow = currentPrice -70;
+       recentHigh = currentPrice + 70;
+     }
+       else   if( currentPrice  > 500) {
+         recentLow = currentPrice -80;
+         recentHigh = currentPrice + 80;
+       }
   
   // ============ BULLISH SIGNALS ============
   const bullishSignals = [];
   
   // Signal 1: EMA5 crosses above EMA10
  // if (e5Prev <= e10Prev && e5 > e10) bullishSignals.push('EMA5>EMA10');
-  
-  // Signal 2: EMA10 crosses above EMA20
-  if (currentPrice > e20) bullishSignals.push('EMA10>EMA20');
+  let trade = true;
+
+  if( currentPrice  < 100 &&  ((currentPrice -e20) > 20)) trade = false;
+    else if( currentPrice  < 200 && ((currentPrice - e20) > 25)) trade = false
+    else  if( currentPrice  < 300 && ((currentPrice - e20) > 30)) trade = false
+     else   if( currentPrice  < 400 && ((currentPrice - e20) > 35)) trade = false
+     else   if( currentPrice  < 500 && ((currentPrice - e20) > 40)) trade = false
+       else   if( currentPrice  > 500 && ((currentPrice - e20) > 45)) trade = false
+   debugger
+     // Signal 2: EMA10 crosses above EMA20
+  if (!trade && currentPrice > e20) bullishSignals.push('EMA10>EMA20');
 
  //  if (prevPrice < e10 &&e10Prev < e20Prev && e10 > e20) bullishSignals.push('EMA10>EMA20');
   
@@ -1175,13 +1219,19 @@ const recentCandles1 = candles.slice(-63);
   
   // ============ BEARISH SIGNALS ============
   const bearishSignals = [];
-  
+   let trade2 = true;
   // Signal 1: EMA5 crosses below EMA10
  // if (e5Prev >= e10Prev && e5 < e10) bearishSignals.push('EMA5<EMA10');
-  
-  // Signal 2: EMA10 crosses below EMA20
+    if( currentPrice  < 100 &&  ((e20 - currentPrice) > 20)) trade2 = false;
+    else if( currentPrice  < 200 && ((e20 - currentPrice) > 25)) trade2 = false;
+    else  if( currentPrice  < 300 && ((e20 - currentPrice) > 30)) trade2 = false;
+     else   if( currentPrice  < 400 && ((e20 - currentPrice) > 35)) trade2 = false;
+      else   if( currentPrice  < 500 && ((e20 - currentPrice) > 40)) trade2 = false;
+            else   if( currentPrice  > 500 && ((e20 - currentPrice) > 45)) trade2 = false;
+    
+     // Signal 2: EMA10 crosses below EMA20
   //if (e10Prev >= e20Prev && e10 < e20) bearishSignals.push('EMA10<EMA20');
-   if (currentPrice < e20) bearishSignals.push('EMA10<EMA20');
+   if (!trade2 && currentPrice < e20) bearishSignals.push('EMA10<EMA20');
    
    // if ( prevPrice < e10 &&e10Prev > e20Prev && e10 < e20) bearishSignals.push('EMA10<EMA20');
   // Signal 3: EMA5 crosses below EMA20
@@ -1214,6 +1264,7 @@ const recentCandles1 = candles.slice(-63);
       reason: `${bullishSignals.length} bullish signals: ${signalDescription}`,
       isOneMinuteTrade: true,
       chartPatterns: bullishSignals,
+      emaDifference,
       breakoutLevels: {
         entry: currentPrice,
         stopLoss: recentLow,
@@ -1233,6 +1284,7 @@ const recentCandles1 = candles.slice(-63);
       reason: `${bearishSignals.length} bearish signals: ${signalDescription}`,
       isOneMinuteTrade: true,
       chartPatterns: bearishSignals,
+      emaDifference,
       breakoutLevels: {
         entry: currentPrice,
         stopLoss: recentHigh,
@@ -1252,6 +1304,7 @@ const recentCandles1 = candles.slice(-63);
       reason: `Strong bullish signal: ${signalDescription}`,
       isOneMinuteTrade: true,
       chartPatterns: bullishSignals,
+      emaDifference,
       breakoutLevels: {
         entry: currentPrice,
         stopLoss: recentLow,
@@ -1270,6 +1323,7 @@ const recentCandles1 = candles.slice(-63);
       reason: `Strong bearish signal: ${signalDescription}`,
       isOneMinuteTrade: true,
       chartPatterns: bearishSignals,
+      emaDifference,
       breakoutLevels: {
         entry: currentPrice,
         stopLoss: recentHigh,
@@ -1283,6 +1337,7 @@ const recentCandles1 = candles.slice(-63);
     pattern: 'Multi-Indicator System',
     reason: `Waiting for confluence. Bullish: ${bullishSignals.length}, Bearish: ${bearishSignals.length}, RSI: ${rsi.toFixed(1)}`,
     isOneMinuteTrade: true,
+    emaDifference,
   };
 }
 // function isBeforeThreePmIst(timestamp) {
@@ -3298,6 +3353,7 @@ function PCRAnalysis({ apiKey }) {
                       {selectedInterval === 'minute' && <th>3m Chart Structure</th>}
                       {selectedInterval === 'minute' && <th>5m Chart Structure</th>}
                       {selectedInterval === 'minute' && <th>1m EMA 10/20</th>}
+                      {selectedInterval === 'minute' && <th>EMA Difference</th>}
                       <th>Entry</th>
                       <th>Target</th>
                       <th>Stop loss</th>
@@ -3333,6 +3389,7 @@ function PCRAnalysis({ apiKey }) {
                           {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.threeMinuteChart || 'No 3m chart structure confirmation'}</td>}
                           {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.fiveMinuteChart || 'No 5m chart structure confirmation'}</td>}
                           {selectedInterval === 'minute' && <td>{signal.minuteConfirmation?.emaStatus || 'EMA confirmation unavailable'}<small>{signal.minuteConfirmation?.ema || ''}</small></td>}
+                          {selectedInterval === 'minute' && <td className={Number(signal.emaDifference) > 0 ? 'up' : Number(signal.emaDifference) < 0 ? 'down' : ''}>{signal.emaDifference || '0.00'}</td>}
                           <td>₹{Number(signal.entry).toFixed(2)}</td>
                           <td>₹{Number(signal.target).toFixed(2)}{signal.levelSource && <small>{signal.levelSource}</small>}</td>
                           <td>₹{Number(signal.stopLoss).toFixed(2)}{signal.levelSource && <small>{signal.levelSource}</small>}</td>
