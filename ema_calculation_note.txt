@@ -1,0 +1,2 @@
+calculateTradeLevels 1300 line number 
+calculateEMA function
