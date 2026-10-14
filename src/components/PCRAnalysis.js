@@ -1140,8 +1140,8 @@ const recentCandles1 = candles.slice(-63);
   const vwapValue = vwap[vwap.length - 1]?.value || 0;
   
   const recent = candles.slice(-3);
-  const recentLow = Math.min(...recent.map(c => c.l));
-  const recentHigh = Math.max(...recent.map(c => c.h));
+  const recentLow = currentPrice -10;
+  const recentHigh = currentPrice + 10;
   
   // ============ BULLISH SIGNALS ============
   const bullishSignals = [];
@@ -1150,7 +1150,7 @@ const recentCandles1 = candles.slice(-63);
  // if (e5Prev <= e10Prev && e5 > e10) bullishSignals.push('EMA5>EMA10');
   
   // Signal 2: EMA10 crosses above EMA20
-  if (prevPrice < e10 && e10 > e20) bullishSignals.push('EMA10>EMA20');
+  if (currentPrice > e20) bullishSignals.push('EMA10>EMA20');
 
  //  if (prevPrice < e10 &&e10Prev < e20Prev && e10 > e20) bullishSignals.push('EMA10>EMA20');
   
@@ -1181,7 +1181,7 @@ const recentCandles1 = candles.slice(-63);
   
   // Signal 2: EMA10 crosses below EMA20
   //if (e10Prev >= e20Prev && e10 < e20) bearishSignals.push('EMA10<EMA20');
-   if (prevPrice > e20 && e10 < e20) bearishSignals.push('EMA10<EMA20');
+   if (currentPrice < e20) bearishSignals.push('EMA10<EMA20');
    
    // if ( prevPrice < e10 &&e10Prev > e20Prev && e10 < e20) bearishSignals.push('EMA10<EMA20');
   // Signal 3: EMA5 crosses below EMA20
@@ -1337,26 +1337,26 @@ function calculateTradeLevels(candles, signal, oneMinuteMode = false, numCandles
 
     if (signal.action === 'BUY') {
       const risk = patternEntry - patternStop;
-      // Target: 2x risk from entry (institutional 1:2 ratio)
-      const target = patternEntry + (risk * 2);
+      // Target: 1x risk from entry (1:1 ratio)
+      const target = patternEntry + risk;
       return {
         entry: patternEntry, // Pattern breakout level
         target,
         stopLoss: patternStop, // Pattern stop level
         risk,
-        rewardRatio: 2,
+        rewardRatio: 1,
         levelSource: `Breakout Pattern: ${signal.chartPatterns[0]}`,
       };
     } else {
       // SELL
       const risk = patternStop - patternEntry;
-      const target = patternEntry - (risk * 2);
+      const target = patternEntry - risk;
       return {
         entry: patternEntry,
         target: Math.max(target, 0.05), // Ensure positive target
         stopLoss: patternStop,
         risk,
-        rewardRatio: 2,
+        rewardRatio: 1,
         levelSource: `Breakout Pattern: ${signal.chartPatterns[0]}`,
       };
     }
@@ -1498,63 +1498,65 @@ function calculateTradeCost(entry, lotSize) {
   };
 }
 
-function buildSignalRows(candles, oneMinuteMode = false, fiveMinuteCandles = [], threeMinuteCandles = [], numCandles = TRADING_CONSTANTS.DEFAULT_CANDLES) {
-  let activeTradeUntil = 0;
+function buildSignalRows(candles, oneMinuteMode = false, fiveMinuteCandles = [], threeMinuteCandles = [], numCandles = TRADING_CONSTANTS.DEFAULT_CANDLES, selectedExpiry = '') {
+  let activeTradeUntil = false;
+  const signals = [];  // Track all generated signals
+  
   console.log('buildSignalRows time', new Date())
   console.log('buildSignalRows', candles?.length)
-  return candles
-    .map((_, index) => {
-      if (index < 10) return null;
-      if (candles[index].x <= activeTradeUntil) return null;
-      if (!isBeforeThreePmIst(candles[index].x)) return null;
-      const window = candles.slice(0, index + 1).slice(-numCandles);
-      const fiveMinuteWindow = fiveMinuteCandles.filter(candle => candle.x <= candles[index].x).slice(-numCandles);
-      const threeMinuteWindow = threeMinuteCandles.filter(candle => candle.x <= candles[index].x).slice(-numCandles);
-      const signal = calculateTradeSignal(window, oneMinuteMode, fiveMinuteWindow, threeMinuteWindow, numCandles);
-      if (signal.action === 'HOLD') return null;
+  
+  candles.forEach((_, index) => {
+    if (index < 10) return;
+    if (candles[index].x <= activeTradeUntil) return;
+    if (!isBeforeThreePmIst(candles[index].x)) return;
+    
+    const window = candles.slice(0, index + 1).slice(-numCandles);
+    const fiveMinuteWindow = fiveMinuteCandles.filter(candle => candle.x <= candles[index].x).slice(-numCandles);
+    const threeMinuteWindow = threeMinuteCandles.filter(candle => candle.x <= candles[index].x).slice(-numCandles);
+    const signal = calculateTradeSignal(window, oneMinuteMode, fiveMinuteWindow, threeMinuteWindow, numCandles, selectedExpiry);
+    
+    if (signal.action === 'HOLD') return;
+    
+    // 🔑 KEY CHECK: If there's an active pending trade, skip ALL new signals
+    const lastSignal = signals.length > 0 ? signals[signals.length - 1] : null;
+    if (lastSignal && lastSignal.outcome === 'Pending') {
+      console.log(`[SKIP] Pending trade active at ${new Date(lastSignal.time).toLocaleTimeString()}, ignoring new ${signal.action} signal`);
+      return;
+    }
 
-      const signalCandle = candles[index];
-      const levels = calculateTradeLevels(window, signal, oneMinuteMode, numCandles);
-      const { entry, target, stopLoss } = levels;
+    const signalCandle = candles[index];
+    const levels = calculateTradeLevels(window, signal, oneMinuteMode, numCandles);
+    const { entry, target, stopLoss } = levels;
 
-      if (signal.action === 'BUY') {
-        const allFutureCandles = candles.slice(index + 1);
-        const future = oneMinuteMode
-          ? allFutureCandles.filter(candle => getTradingDayKey(candle.x) === getTradingDayKey(signalCandle.x))
-          : allFutureCandles;
-        const sessionEnded = oneMinuteMode && allFutureCandles.some(candle => getTradingDayKey(candle.x) !== getTradingDayKey(signalCandle.x));
-        const result = evaluateSignalWithFutureCandles(signal, future, target, stopLoss, sessionEnded ? future.at(-1) || signalCandle : null);
-        activeTradeUntil = result.closedAt || Number.MAX_SAFE_INTEGER;
-        return {
-          ...signal,
-          time: signalCandle.x,
-          entry,
-          target,
-          stopLoss,
-          levelSource: levels.levelSource,
-          ...result,
-        };
-      }
-
-      const allFutureCandles = candles.slice(index + 1);
-      const future = oneMinuteMode
-        ? allFutureCandles.filter(candle => getTradingDayKey(candle.x) === getTradingDayKey(signalCandle.x))
-        : allFutureCandles;
-      const sessionEnded = oneMinuteMode && allFutureCandles.some(candle => getTradingDayKey(candle.x) !== getTradingDayKey(signalCandle.x));
-      const result = evaluateSignalWithFutureCandles(signal, future, target, stopLoss, sessionEnded ? future.at(-1) || signalCandle : null);
+    const allFutureCandles = candles.slice(index + 1);
+    const future = oneMinuteMode
+      ? allFutureCandles.filter(candle => getTradingDayKey(candle.x) === getTradingDayKey(signalCandle.x))
+      : allFutureCandles;
+    const sessionEnded = oneMinuteMode && allFutureCandles.some(candle => getTradingDayKey(candle.x) !== getTradingDayKey(signalCandle.x));
+    const result = evaluateSignalWithFutureCandles(signal, future, target, stopLoss, sessionEnded ? future.at(-1) || signalCandle : null, entry);
+    
+    // Update activeTradeUntil based on outcome
+    if (result.outcome === 'Pending') {
+      activeTradeUntil = Number.MAX_SAFE_INTEGER;
+      console.log(`[PENDING] Trade started at ${new Date(signalCandle.x).toLocaleTimeString()}, blocking all new signals`);
+    } else {
       activeTradeUntil = result.closedAt || Number.MAX_SAFE_INTEGER;
-      return {
-        ...signal,
-        time: signalCandle.x,
-        entry,
-        target,
-        stopLoss,
-        levelSource: levels.levelSource,
-        ...result,
-      };
-    })
-    .filter(Boolean)
-    .reverse();
+    }
+    
+    const newSignal = {
+      ...signal,
+      time: signalCandle.x,
+      entry,
+      target,
+      stopLoss,
+      levelSource: levels.levelSource,
+      ...result,
+    };
+    
+    signals.push(newSignal);
+  });
+  
+  return signals.reverse();
 }
 
 function buildReverseSignalRows(signalRows) {

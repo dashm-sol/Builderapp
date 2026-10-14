@@ -108,7 +108,7 @@ export const TRADING_CONSTANTS = {
 //   - 14 days: Extended history (~5,000 candles)
 //   - 30 days: Full month (~11,000 candles, slower load)
 export const HISTORICAL_DATA_CONFIG = {
-  daysToFetch: 4, // ← Change this value to adjust historical data range
+  daysToFetch: 8, // ← Change this value to adjust historical data range
   description: '~5 trading days of historical data for pattern recognition'
 };
 
