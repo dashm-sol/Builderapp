@@ -1186,12 +1186,12 @@ recentHigh = currentPrice + 30;
  // if (e5Prev <= e10Prev && e5 > e10) bullishSignals.push('EMA5>EMA10');
   let trade = true;
 
-  if( currentPrice  < 100 &&  ((currentPrice -e20) > 20)) trade = false;
-    else if( currentPrice  < 200 && ((currentPrice - e20) > 25)) trade = false
-    else  if( currentPrice  < 300 && ((currentPrice - e20) > 30)) trade = false
-     else   if( currentPrice  < 400 && ((currentPrice - e20) > 35)) trade = false
-     else   if( currentPrice  < 500 && ((currentPrice - e20) > 40)) trade = false
-       else   if( currentPrice  > 500 && ((currentPrice - e20) > 45)) trade = false
+  if( currentPrice  < 100 &&  ((currentPrice -e20) > 10)) trade = false;
+    else if( currentPrice  < 200 && ((currentPrice - e20) > 15)) trade = false
+    else  if( currentPrice  < 300 && ((currentPrice - e20) > 20)) trade = false
+     else   if( currentPrice  < 400 && ((currentPrice - e20) > 25)) trade = false
+     else   if( currentPrice  < 500 && ((currentPrice - e20) > 30)) trade = false
+       else   if( currentPrice  > 500 && ((currentPrice - e20) > 35)) trade = false
    debugger
      // Signal 2: EMA10 crosses above EMA20
   if (!trade && currentPrice > e20) bullishSignals.push('EMA10>EMA20');
@@ -1222,12 +1222,12 @@ recentHigh = currentPrice + 30;
    let trade2 = true;
   // Signal 1: EMA5 crosses below EMA10
  // if (e5Prev >= e10Prev && e5 < e10) bearishSignals.push('EMA5<EMA10');
-    if( currentPrice  < 100 &&  ((e20 - currentPrice) > 20)) trade2 = false;
-    else if( currentPrice  < 200 && ((e20 - currentPrice) > 25)) trade2 = false;
-    else  if( currentPrice  < 300 && ((e20 - currentPrice) > 30)) trade2 = false;
-     else   if( currentPrice  < 400 && ((e20 - currentPrice) > 35)) trade2 = false;
-      else   if( currentPrice  < 500 && ((e20 - currentPrice) > 40)) trade2 = false;
-            else   if( currentPrice  > 500 && ((e20 - currentPrice) > 45)) trade2 = false;
+    if( currentPrice  < 100 &&  ((e20 - currentPrice) > 10)) trade2 = false;
+    else if( currentPrice  < 200 && ((e20 - currentPrice) > 15)) trade2 = false;
+    else  if( currentPrice  < 300 && ((e20 - currentPrice) > 20)) trade2 = false;
+     else   if( currentPrice  < 400 && ((e20 - currentPrice) > 25)) trade2 = false;
+      else   if( currentPrice  < 500 && ((e20 - currentPrice) > 30)) trade2 = false;
+            else   if( currentPrice  > 500 && ((e20 - currentPrice) > 35)) trade2 = false;
     
      // Signal 2: EMA10 crosses below EMA20
   //if (e10Prev >= e20Prev && e10 < e20) bearishSignals.push('EMA10<EMA20');
@@ -1457,20 +1457,39 @@ function calculateCurrentTradePlan(candles, signal) {
   return { ...signal, time: candles.at(-1).x, ...calculateTradeLevels(candles, signal, signal.isOneMinuteTrade) };
 }
 
-function evaluateSignalWithFutureCandles(signal, future, target, stopLoss, sessionCloseCandle = null) {
+function evaluateSignalWithFutureCandles(signal, future, target, stopLoss, sessionCloseCandle = null, entry) {
   if (future.length === 0) {
     if (sessionCloseCandle) {
       return {
-        outcome: 'Session Exit',
+        outcome: 'Market Exit - Session Close',
         exitPrice: sessionCloseCandle.c,
         closedAt: sessionCloseCandle.x,
-        evaluation: `Same-day session exit at ₹${sessionCloseCandle.c.toFixed(2)}; position was not carried overnight`,
+        evaluation: `Market close (3:00 PM IST): Position closed at ₹${sessionCloseCandle.c.toFixed(2)}`,
       };
     }
     return { outcome: 'Pending', evaluation: 'Waiting for the next candle high/low' };
   }
 
+  // Check for market close at 3:00 PM IST for 1-minute trades
+  const marketCloseTime = 15 * 60; // 3:00 PM in minutes
+  
   for (const [futureIndex, candle] of future.entries()) {
+    // Check if this candle crosses 3:00 PM market close
+    const candleTime = new Date(candle.x);
+    const indiaTime = new Date(candleTime.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const candleMinutes = indiaTime.getHours() * 60 + indiaTime.getMinutes();
+    
+    // If candle time is at or past 3:00 PM, close the trade at market price
+    if (candleMinutes >= marketCloseTime) {
+      return {
+        outcome: 'Market Exit - Close',
+        exitPrice: candle.c,
+        closedAt: candle.x,
+        evaluation: `Market close (3:00 PM IST): Position closed at ₹${candle.c.toFixed(2)} (Entry: ₹${entry.toFixed(2)})`,
+        candlesToOutcome: futureIndex + 1,
+      };
+    }
+    
     const hitStop = signal.action === 'BUY' ? candle.l <= stopLoss : candle.h >= stopLoss;
     const hitTarget = signal.action === 'BUY' ? candle.h >= target : candle.l <= target;
     const triggerTime = new Date(candle.x).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -1504,10 +1523,10 @@ function evaluateSignalWithFutureCandles(signal, future, target, stopLoss, sessi
   }
   if (sessionCloseCandle) {
     return {
-      outcome: 'Session Exit',
+      outcome: 'Market Exit - Close',
       exitPrice: sessionCloseCandle.c,
       closedAt: sessionCloseCandle.x,
-      evaluation: `Same-day session exit at ₹${sessionCloseCandle.c.toFixed(2)}; position was not carried overnight`,
+      evaluation: `Market close (3:00 PM IST): Position closed at ₹${sessionCloseCandle.c.toFixed(2)}`,
     };
   }
   return {
@@ -3393,8 +3412,8 @@ function PCRAnalysis({ apiKey }) {
                           <td>₹{Number(signal.entry).toFixed(2)}</td>
                           <td>₹{Number(signal.target).toFixed(2)}{signal.levelSource && <small>{signal.levelSource}</small>}</td>
                           <td>₹{Number(signal.stopLoss).toFixed(2)}{signal.levelSource && <small>{signal.levelSource}</small>}</td>
-                          <td>₹{Number(signal.outcome === 'True' ? signal.target : signal.outcome === 'False' ? signal.stopLoss : signal.entry).toFixed(2)}</td>
-                          <td className={signal.outcome === 'Pending' ? '' : signal.outcome === 'True' ? 'profit' : 'loss'}>{(signal.action === 'BUY' ? (signal.outcome === 'True' ? signal.target - signal.entry : signal.outcome === 'False' ? signal.stopLoss - signal.entry : 0) : (signal.outcome === 'True' ? signal.entry - signal.target : signal.outcome === 'False' ? signal.entry - signal.stopLoss : 0)).toFixed(2)} pts</td>
+                          <td>₹{Number(signal.exitPrice || (signal.outcome === 'True' ? signal.target : signal.outcome === 'False' ? signal.stopLoss : signal.entry)).toFixed(2)}</td>
+                          <td className={signal.outcome === 'Pending' ? '' : signal.outcome === 'True' || (signal.exitPrice && signal.action === 'BUY' ? signal.exitPrice > signal.entry : signal.exitPrice < signal.entry) ? 'profit' : 'loss'}>{(signal.action === 'BUY' ? (signal.exitPrice ? signal.exitPrice - signal.entry : (signal.outcome === 'True' ? signal.target - signal.entry : signal.outcome === 'False' ? signal.stopLoss - signal.entry : 0)) : (signal.exitPrice ? signal.entry - signal.exitPrice : (signal.outcome === 'True' ? signal.entry - signal.target : signal.outcome === 'False' ? signal.entry - signal.stopLoss : 0))).toFixed(2)} pts</td>
                           <td className={currentPLPoints > 0 ? 'profit' : currentPLPoints < 0 ? 'loss' : ''}>{currentPLPoints.toFixed(2)} pts</td>
                           <td><span className={`outcome-pill ${signal.outcome.toLowerCase()}`}>{signal.outcome}</span></td>
                           <td>{signal.evaluation}</td>

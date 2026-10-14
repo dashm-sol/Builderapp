@@ -6,7 +6,7 @@ export const TRADING_CONSTANTS = {
   MAX_CANDLES: 200,
   
   // Maximum number of trading days to display in day filter dropdown
-  MAX_TRADING_DAYS: 10,
+  MAX_TRADING_DAYS: 30,
   
   // Pattern detection thresholds
   CHART_PATTERN_TOLERANCE: 0.01, // 1% for normal charts
@@ -108,7 +108,7 @@ export const TRADING_CONSTANTS = {
 //   - 14 days: Extended history (~5,000 candles)
 //   - 30 days: Full month (~11,000 candles, slower load)
 export const HISTORICAL_DATA_CONFIG = {
-  daysToFetch: 8, // ← Change this value to adjust historical data range
+  daysToFetch: 30, // ← Change this value to adjust historical data range
   description: '~5 trading days of historical data for pattern recognition'
 };
 
